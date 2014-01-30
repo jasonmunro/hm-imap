@@ -1233,6 +1233,8 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      */
     public function disconnect() {
         $command = "LOGOUT\r\n";
+        $this->state = 'unconnected';
+        $this->selected_mailbox = false;
         $this->send_command($command);
         $result = $this->get_response();
         if (is_resource($this->handle)) {
