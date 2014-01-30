@@ -965,6 +965,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     public $folder_max = 500;
 
     /* internal use */
+    private $state = 'unconnected';
     private $stream_size = 0;
     private $capability = false;
     private $selected_mailbox = false;
@@ -1117,6 +1118,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             }
         }
         if ($status) {
+            $this->state = 'selected';
             $this->selected_mailbox = $box;
         }
         return array(
@@ -1174,6 +1176,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             }
             if (stristr($response, 'A'.$this->command_count.' OK')) {
                 $authed = true;
+                $this->state = 'authenticated';
             }
         }
         if ( $authed ) {
@@ -1208,6 +1211,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $this->handle = @fsockopen($this->server, $this->port, $errorno, $errorstr, 30);
             if (is_resource($this->handle)) {
                 $this->debug[] = 'Successfully opened port to the IMAP server';
+                $this->state = 'connected';
                 return $this->authenticate($config['username'], $config['password']);
             }
             else {
@@ -2061,4 +2065,18 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         return $status;
     }
 
+    /**
+     * returns current IMAP state
+     *
+     * @return string one of:
+     *                unconnected   = no IMAP server TCP connection
+     *                connected     = an IMAP server TCP connection exists
+     *                authenticated = successfully authenticated to the IMAP server
+     *                selected      = a mailbox has been selected
+     */
+    public function get_state() {
+        return $this->state;
+    }
+
 }
+?>
