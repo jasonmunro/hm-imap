@@ -24,13 +24,15 @@
 /* base functions for IMAP communication */
 class Hm_IMAP_Base {
 
-    protected $handle = false;
-    protected $debug = array();
-    protected $commands = array();
-    protected $responses = array();
-    protected $current_command = false;
-    protected $max_read = false;
-    protected $command_count = 0;
+    protected $handle = false;           // fsockopen handle to the IMAP server
+    protected $debug = array();          // debug messages
+    protected $commands = array();       // list of IMAP commands issued
+    protected $responses = array();      // list of raw IMAP responses
+    protected $current_command = false;  // current/latest IMAP command issued
+    protected $max_read = false;         // limit on allowable read size
+    protected $command_count = 0;        // current command number
+
+    /* attributes that can be set for the IMAP connaction */
     protected $config = array('server', 'starttls', 'port', 'tls', 'read_only',
         'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max');
 
