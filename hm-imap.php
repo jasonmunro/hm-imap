@@ -38,7 +38,7 @@ class Hm_IMAP_Base {
      * increment the imap command prefix such that it counts
      * up on each command sent. ('A1', 'A2', ...)
      *
-     * @return void
+     * @return int new command count
      */
     private function command_number() {
         $this->command_count += 1;
