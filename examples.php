@@ -1,12 +1,25 @@
 <?php
 
+/**
+ * Examples of how to use the Hm_IMAP class.
+ * You can run all the examples from the command line with:
+ *
+ * php ./examples.php imap-username imap-password
+ *
+ * You will need to check the config in the $imap->connect section
+ * and tweak the server/port/etc/ for your particular setup.
+ */
+
+/* include IMAP library */
 require('hm-imap.php');
 
-if ( isset( $argv[1] ) ) {
-    $password = $argv[1];
+/* check for username and password */
+if ( isset( $argv[2] ) ) {
+    $username = $argv[1];
+    $password = $argv[2];
 }
 else {
-    die( "you need to pass your IMAP password to this script:\nphp ./example.php yourpassword\n" );
+    die( "\nyou need to pass your IMAP username and password to this script:\n\nphp ./example.php jason 123456\n\n" );
 }
 
 /* show all notices */
@@ -21,7 +34,7 @@ $imap = new Hm_IMAP();
 /* connect to the specified server. The username and password must be set,
  * as well as any other settings that differ from the defaults */
 if ($imap->connect([
-    'username'       => 'jason',      // IMAP username
+    'username'       => $username,    // IMAP username
     'password'       => $password,    // IMAP password
     'server'         => '127.0.0.1',  // IMAP server name or address
     'port'           => 143,          // IMAP server port
