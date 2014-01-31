@@ -948,6 +948,49 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
         return $res;
     }
 
+    /**
+     * helper method to grab values from the SELECT response
+     *
+     * @param $vals array low level parsed select response segment
+     * @param $offset int offset in the list to search for a value
+     * @param $key string value in the array to start from
+     *
+     * @return int the adjacent value
+     */
+    protected function get_adjacent_response_value($vals, $offset, $key) {
+        foreach ($vals as $i => $v) {
+            $i += $offset;
+            if (intval($v) && isset($vals[$i]) && $vals[$i] == $key) {
+                return $v;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * helper function to cllect flags from the SELECT response
+     *
+     * @param $vals array low level parsed select response segment
+     *
+     * @return array list of flags
+     */
+    function get_flag_values($vals) {
+        $collect_flags = false;
+        $res = array();
+        foreach ($vals as $i => $v) {
+            if ($v == ')') {
+                $collect_flags = false;
+            }
+            if ($collect_flags) {
+                $res[] = $v;
+            }
+            if ($v == '(') {
+                $collect_flags = true;
+            }
+        }
+        return $res;
+    }
+
 }
 
 /* public interface to IMAP commands */
@@ -1063,60 +1106,22 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $pflags = array();
         foreach ($res as $vals) {
             if (in_array('UIDNEXT', $vals)) {
-                foreach ($vals as $i => $v) {
-                    if (intval($v) && isset($vals[($i - 1)]) && $vals[($i - 1)] == 'UIDNEXT') {
-                        $uidnext = $v;
-                    }
-                }
+                $uidnext = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
             }
             if (in_array('UNSEEN', $vals)) {
-                foreach ($vals as $i => $v) {
-                    if (intval($v) && isset($vals[($i - 1)]) && $vals[($i - 1)] == 'UNSEEN') {
-                        $unseen = $v;
-                    }
-                }
+                $unseen = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
             }
             if (in_array('UIDVALIDITY', $vals)) {
-                foreach ($vals as $i => $v) {
-                    if (intval($v) && isset($vals[($i - 1)]) && $vals[($i - 1)] == 'UIDVALIDITY') {
-                        $uidvalidity = $v;
-                    }
-                }
-            }
-            if (in_array('PERMANENTFLAGS', $vals)) {
-                $collect_flags = false;
-                foreach ($vals as $i => $v) {
-                    if ($v == ')') {
-                        $collect_flags = false;
-                    }
-                    if ($collect_flags) {
-                        $pflags[] = $v;
-                    }
-                    if ($v == '(') {
-                        $collect_flags = true;
-                    }
-                }
-            }
-            if (in_array('FLAGS', $vals)) {
-                $collect_flags = false;
-                foreach ($vals as $i => $v) {
-                    if ($v == ')') {
-                        $collect_flags = false;
-                    }
-                    if ($collect_flags) {
-                        $flags[] = $v;
-                    }
-                    if ($v == '(') {
-                        $collect_flags = true;
-                    }
-                }
+                $uidvalidity = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
             }
             if (in_array('EXISTS', $vals)) {
-                foreach ($vals as $i => $v) {
-                    if (intval($v) && isset($vals[($i + 1)]) && $vals[($i + 1)] == 'EXISTS') {
-                        $exists = $v;
-                    }
-                }
+                $exists = $this->get_adjacent_response_value($vals, 1, 'EXISTS');
+            }
+            if (in_array('PERMANENTFLAGS', $vals)) {
+                $pflags = $this->get_flag_values($vals);
+            }
+            if (in_array('FLAGS', $vals)) {
+                $flags = $this->get_flag_values($vals);
             }
         }
         if ($status) {
