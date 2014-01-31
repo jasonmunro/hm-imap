@@ -2,6 +2,13 @@
 
 require('hm-imap.php');
 
+if ( isset( $argv[1] ) ) {
+    $password = $argv[1];
+}
+else {
+    die( "you need to pass your IMAP password to this script:\nphp ./example.php yourpassword\n" );
+}
+
 /* show all notices */
 error_reporting ( E_ALL | E_STRICT );
 
@@ -15,7 +22,7 @@ $imap = new Hm_IMAP();
  * as well as any other settings that differ from the defaults */
 if ($imap->connect([
     'username'       => 'jason',      // IMAP username
-    'password'       => 'password',   // IMAP password
+    'password'       => $password,    // IMAP password
     'server'         => '127.0.0.1',  // IMAP server name or address
     'port'           => 143,          // IMAP server port
     'tls'            => false,        // Use TLS encryption
