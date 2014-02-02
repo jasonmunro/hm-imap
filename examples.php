@@ -10,11 +10,9 @@
  * and tweak the server/port/etc/ for your particular setup.
  */
 
-/* the ALL_COMMANDS_EXAMPLE set runs every public method in the class */
-define( 'ALL_COMMANDS_EXAMPLE', true);
-
-/* the NEW_MESSAGE_CHECK set gets the subjects of the 5 newest messages in each mailbox */
-define( 'NEW_MESSAGE_CHECK', true);
+define( 'ALL_COMMANDS_EXAMPLE', true ); /* runs every public method in the class */
+define( 'NEW_MESSAGE_CHECK', true );    /* gets the subjects of the 5 newest messages in each mailbox */
+define( 'INBOX_LISTING', true );        /* gets the first 100 messages by arrival time and prints their headers */
 
 /* include IMAP library */
 require('hm-imap.php');
@@ -52,8 +50,74 @@ if ($imap->connect([
     'sort_speedup'   => true,         // use non-compliant fast sort order processing
     'folder_max'     => 500 ])) {     // maximum number of mailboxes to fetch in get_mailbox_list()
 
+
+    /* display the first 100 message headers in the inbox */
+    if ( INBOX_LISTING ) {
+
+        /* select the INBOX */
+        $folder_detail = $imap->select_mailbox( 'INBOX' );
+
+        /* check the status of the select */
+        if ( $folder_detail['selected'] ) {
+
+            /* get the message UIDs in arrival order */
+            $uids = $imap->get_message_uids( 'ARRIVAL', true, 'ALL' );
+
+            /* if the INBOX is not empty continue */
+            if ( ! empty( $uids ) ) {
+
+                /* get the list of header values for the first 100 UIDs */
+                $msg_headers = $imap->get_message_list( array_slice( $uids, 0, 100 ) );
+
+                /* dump the headers */
+                print_r( $msg_headers );
+            }
+        }
+    }
+
+    /* search for new mail in every folder */
+    if ( NEW_MESSAGE_CHECK ) {
+
+        /* get a list of all the folders in this account */
+        $folders = $imap->get_mailbox_list();
+
+        /* loop through the folder list detail */
+        foreach ($folders as $folder_name => $folder_atts) {
+
+            /* see if this folder can be selected */
+            if ( ! $folder_atts['noselect'] ) {
+
+                /* select the folder */
+                $folder_detail = $imap->select_mailbox($folder_name);
+
+                /* if the select operation worked continue */
+                if ($folder_detail['selected']) {
+
+                    /* get all unread IMAP uids from this folder */
+                    $uids = $imap->get_message_uids( 'ARRIVAL', true, 'UNSEEN' );
+
+                    /* did we find unread messages? */
+                    if ( ! empty( $uids ) ) {
+
+                        /* get a list of headers for the first five uids */
+                        $headers = $imap->get_message_list( array_slice( $uids, 0, 5) );
+
+                        /* loop through the headers */
+                        foreach ( $headers as $uid => $msg_headers ) {
+
+                            /* print the folder, date, IMAP uid and subject of each message */
+                            if ( isset( $msg_headers['subject'] ) && isset( $msg_headers['date'] ) ) {
+                                printf( "Folder: %s UID: %d Date: %s Subject: %s\n", $folder_name, $uid, $msg_headers['date'], $msg_headers['subject'] );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /* run 'em all! */
-    if (ALL_COMMANDS_EXAMPLE) {
+    if ( ALL_COMMANDS_EXAMPLE ) {
 
         /* get a list of all mailboxes */
         $mailbox_list = $imap->get_mailbox_list();
@@ -110,52 +174,11 @@ if ($imap->connect([
             $imap->start_message_stream( 3, 1 );
 
             /* loop that reads in lines of a streamed message */
-            while ( $line = $imap->read_stream_line() ) { echo 'HERE'.$line."\n";/* do something with $line */ }
+            while ( $line = $imap->read_stream_line() ) { /* do something with $line */ }
 
             /* get a message part content, or the entire message in a raw format */
             $imap->get_message_content( 3, 1 );
 
-        }
-    }
-
-    /* search for new mail in every folder */
-    if (NEW_MESSAGE_CHECK) {
-
-        /* get a list of all the folders in this account */
-        $folders = $imap->get_mailbox_list();
-
-        /* loop through the folder list detail */
-        foreach ($folders as $folder_name => $folder_atts) {
-
-            /* see if this folder can be selected */
-            if ( ! $folder_atts['noselect'] ) {
-
-                /* select the folder */
-                $folder_detail = $imap->select_mailbox($folder_name);
-
-                /* if the select operation worked continue */
-                if ($folder_detail['selected']) {
-
-                    /* get all unread IMAP uids from this folder */
-                    $uids = $imap->get_message_uids( 'ARRIVAL', true, 'UNSEEN' );
-
-                    /* did we find unread messages? */
-                    if ( ! empty( $uids ) ) {
-
-                        /* get a list of headers for the first five uids */
-                        $headers = $imap->get_message_list( array_slice($uids, 0, 5) );
-
-                        /* loop through the headers */
-                        foreach ( $headers as $uid => $msg_headers ) {
-
-                            /* print the folder, date, IMAP uid and subject of each message */
-                            if ( isset( $msg_headers['subject'] ) && isset( $msg_headers['date'] ) ) {
-                                printf( "Folder: %s UID: %d Date: %s Subject: %s\n", $folder_name, $uid, $msg_headers['date'], $msg_headers['subject'] );
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
