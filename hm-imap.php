@@ -1351,7 +1351,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array message structure represented as a nested array
      */
-    public function get_message_structure($uid, $filter=false) {
+    public function get_message_structure($uid) {
         if (!$this->is_clean($uid, 'uid')) {
             return array();
         }
@@ -1383,9 +1383,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 $struct[1] = $this->parse_single_part($response);
             }
         } 
-        if ($filter) {
-            return $this->filter_alternatives($struct, $filter);
-        }
         return $struct;
     }
 
