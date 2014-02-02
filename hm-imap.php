@@ -991,25 +991,6 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
         return $res;
     }
     
-    /**
-     * return a flat list of message parts and IMAP part numbers
-     * from a nested BODYSTRUCTURE response
-     *
-     * @param $struct array nested BODYSTRUCTURE response
-     * 
-     * @return array list of message part details
-     */
-    protected function flatten_bodystructure($struct, $res=array()) {
-        foreach($struct as $id => $vals) {
-            if(isset($vals['subtype']) && isset($vals['type'])) {
-                $res[$id] = $vals['type'].'/'.$vals['subtype'];
-            }
-            if(isset($vals['subs'])) {
-                $res = $this->flatten_bodystructure($vals['subs'], $res);
-            }
-        }
-        return $res;
-    }
 
 }
 
@@ -1370,7 +1351,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array message structure represented as a nested array
      */
-    public function get_message_structure($uid, $filter=false, $flat_list=false) {
+    public function get_message_structure($uid, $filter=false) {
         if (!$this->is_clean($uid, 'uid')) {
             return array();
         }
@@ -1404,9 +1385,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         } 
         if ($filter) {
             return $this->filter_alternatives($struct, $filter);
-        }
-        if ($flat_list) {
-            return $this->flatten_bodystructure( $struct );
         }
         return $struct;
     }
@@ -2108,6 +2086,61 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      */
     public function get_state() {
         return $this->state;
+    }
+
+    /**
+     * return a flat list of message parts and IMAP part numbers
+     * from a nested BODYSTRUCTURE response
+     *
+     * @param $struct array nested BODYSTRUCTURE response
+     * 
+     * @return array list of message part details
+     */
+    public function flatten_bodystructure($struct, $res=array()) {
+        foreach($struct as $id => $vals) {
+            if(isset($vals['subtype']) && isset($vals['type'])) {
+                $res[$id] = $vals['type'].'/'.$vals['subtype'];
+            }
+            if(isset($vals['subs'])) {
+                $res = $this->flatten_bodystructure($vals['subs'], $res);
+            }
+        }
+        return $res;
+    }
+
+    /**
+     * search a nested BODYSTRUCTURE response for a specific part
+     *
+     * @param $struct array the structure to search
+     * @param $search_term string the search term
+     * @param $search_flds array list of fields to search for the term
+     *
+     * @return array array of all matching parts from the message
+     */
+    public function search_bodystructure($struct, $search_flds, $res=array()) {
+        foreach ($struct as $id => $vals) {
+            if (!is_array($vals)) {
+                continue;
+            }
+            $match_count = count($search_flds);
+            $matches = 0;
+            foreach ($vals as $name => $val) {
+                if ($name == 'subs') {
+                    $res = $this->search_bodystructure($val, $search_flds, $res);
+                }
+                elseif (isset($search_flds[$name]) && stristr($val, $search_flds[$name])) {
+                    $matches++;
+                }
+            }
+            if ($matches == $match_count) {
+                $part = $vals;
+                if (isset($part['subs'])) {
+                    $part['subs'] = count($part['subs']);
+                }
+                $res[$id] = $part;
+            }
+        }
+        return $res;
     }
 
 }
