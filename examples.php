@@ -137,13 +137,10 @@ if ($imap->connect([
                 if ($folder_detail['selected']) {
 
                     /* get all unread IMAP uids from this folder */
-                    $uids = $imap->get_unread_messages();
+                    $uids = $imap->get_message_uids( 'ARRIVAL', true, 'UNSEEN' );
 
                     /* did we find unread messages? */
                     if ( ! empty( $uids ) ) {
-
-                        /* sort the largest first (probably the newest in the folder) */
-                        rsort($uids);
 
                         /* get a list of headers for the first five uids */
                         $headers = $imap->get_message_list( array_slice($uids, 0, 5) );
