@@ -43,7 +43,7 @@ if ($imap->connect([
     'auth'           => 'login',      // can be login or cram-md5 (cram is untested)
     'read_only'      => true,         // read only IMAP connection
     'search_charset' => false,        // charset for searching, can be US-ASCII, UTF-8, or false
-    'sort_speedup'   => false,        // use non-compliant fast sort order processing
+    'sort_speedup'   => true,         // use non-compliant fast sort order processing
     'folder_max'     => 500 ])) {     // maximum number of mailboxes to fetch in get_mailbox_list()
 
     /* get a list of all mailboxes */
@@ -73,7 +73,7 @@ if ($imap->connect([
         $imap->get_message_list( '1:10' );
 
         /* search the first 100 messages in the selected mailbox */
-        $imap->search( 'To', '1:100', 'root' );
+        $imap->search( 'To', '1:100', 'search term' );
 
         /* get sorted list of message uids */
         $imap->get_message_uids();
@@ -86,7 +86,13 @@ if ($imap->connect([
         }
 
         /* get a nested structure that represents the MIME format of the message parts */
-        $imap->get_message_structure( 3 );
+        $struct = $imap->get_message_structure( 3 );
+
+        /* flatten the nested structure into a simple list of IMAP ids and MIME types */
+        $imap->flatten_bodystructure( $struct );
+
+        /* filter out text/plain mime types from the message structure */
+        $imap->search_bodystructure( $struct, array('type' => 'text', 'subtype' => 'plain'));
 
         /* get message headers */
         $imap->get_message_headers( 3, 1 );
