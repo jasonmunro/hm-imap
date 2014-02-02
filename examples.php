@@ -10,6 +10,12 @@
  * and tweak the server/port/etc/ for your particular setup.
  */
 
+/* the ALL_COMMANDS_EXAMPLE set runs every public method in the class */
+define( 'ALL_COMMANDS_EXAMPLE', true);
+
+/* the NEW_MESSAGE_CHECK set gets the subjects of the 5 newest messages in each mailbox */
+define( 'NEW_MESSAGE_CHECK', true);
+
 /* include IMAP library */
 require('hm-imap.php');
 
@@ -46,65 +52,114 @@ if ($imap->connect([
     'sort_speedup'   => true,         // use non-compliant fast sort order processing
     'folder_max'     => 500 ])) {     // maximum number of mailboxes to fetch in get_mailbox_list()
 
-    /* get a list of all mailboxes */
-    $mailbox_list = $imap->get_mailbox_list();
+    /* run 'em all! */
+    if (ALL_COMMANDS_EXAMPLE) {
 
-    /* get the IMAP server capability string */
-    $imap->get_capability();
+        /* get a list of all mailboxes */
+        $mailbox_list = $imap->get_mailbox_list();
 
-    /* create a new IMAP mailbox */
-    if ( $imap->create_mailbox( 'test123' ) ) {
+        /* get the IMAP server capability string */
+        $imap->get_capability();
 
-        /* rename the new mailbox to something else */
-        if ( $imap->rename_mailbox( 'test123', 'test456' ) ) {
+        /* create a new IMAP mailbox */
+        if ( $imap->create_mailbox( 'test123' ) ) {
 
-            /* delete the newly created mailbox */
-            $imap->delete_mailbox( 'test456' );
+            /* rename the new mailbox to something else */
+            if ( $imap->rename_mailbox( 'test123', 'test456' ) ) {
+
+                /* delete the newly created mailbox */
+                $imap->delete_mailbox( 'test456' );
+            }
+        }
+
+        /* select the INBOX */
+        if ( $imap->select_mailbox( 'INBOX' )['selected'] ) {
+
+            /* get the uids of unread messages in the selected mailbox */
+            $imap->get_unread_messages();
+
+            /* get the headers and flags for the uid list */
+            $imap->get_message_list( '1:10' );
+
+            /* search the first 100 messages in the selected mailbox */
+            $imap->search( 'To', '1:100', 'search term' );
+
+            /* get sorted list of message uids */
+            $imap->get_message_uids();
+
+            /* set the Flagged flag on a message */
+            if ( $imap->message_action( 'FLAG', 3 ) ) {
+
+                /* unflag the message */
+                $imap->message_action( 'UNFLAG', 3 );
+            }
+
+            /* get a nested structure that represents the MIME format of the message parts */
+            $struct = $imap->get_message_structure( 3 );
+
+            /* flatten the nested structure into a simple list of IMAP ids and MIME types */
+            $imap->flatten_bodystructure( $struct );
+
+            /* filter out text/plain mime types from the message structure */
+            $imap->search_bodystructure( $struct, array('type' => 'text', 'subtype' => 'plain'));
+
+            /* get message headers */
+            $imap->get_message_headers( 3, 1 );
+
+            /* start streaming message content */
+            $imap->start_message_stream( 3, 1 );
+
+            /* loop that reads in lines of a streamed message */
+            while ( $line = $imap->read_stream_line() ) { echo 'HERE'.$line."\n";/* do something with $line */ }
+
+            /* get a message part content, or the entire message in a raw format */
+            $imap->get_message_content( 3, 1 );
+
         }
     }
 
-    /* select the INBOX */
-    if ( $imap->select_mailbox( 'INBOX' )['selected'] ) {
+    /* search for new mail in every folder */
+    if (NEW_MESSAGE_CHECK) {
 
-        /* get the uids of unread messages in the selected mailbox */
-        $imap->get_unread_messages();
+        /* get a list of all the folders in this account */
+        $folders = $imap->get_mailbox_list();
 
-        /* get the headers and flags for the uid list */
-        $imap->get_message_list( '1:10' );
+        /* loop through the folder list detail */
+        foreach ($folders as $folder_name => $folder_atts) {
 
-        /* search the first 100 messages in the selected mailbox */
-        $imap->search( 'To', '1:100', 'search term' );
+            /* see if this folder can be selected */
+            if ( ! $folder_atts['noselect'] ) {
 
-        /* get sorted list of message uids */
-        $imap->get_message_uids();
+                /* select the folder */
+                $folder_detail = $imap->select_mailbox($folder_name);
 
-        /* set the Flagged flag on a message */
-        if ( $imap->message_action( 'FLAG', 3 ) ) {
+                /* if the select operation worked continue */
+                if ($folder_detail['selected']) {
 
-            /* unflag the message */
-            $imap->message_action( 'UNFLAG', 3 );
+                    /* get all unread IMAP uids from this folder */
+                    $uids = $imap->get_unread_messages();
+
+                    /* did we find unread messages? */
+                    if ( ! empty( $uids ) ) {
+
+                        /* sort the largest first (probably the newest in the folder) */
+                        rsort($uids);
+
+                        /* get a list of headers for the first five uids */
+                        $headers = $imap->get_message_list( array_slice($uids, 0, 5) );
+
+                        /* loop through the headers */
+                        foreach ( $headers as $uid => $msg_headers ) {
+
+                            /* print the folder, date, IMAP uid and subject of each message */
+                            if ( isset( $msg_headers['subject'] ) && isset( $msg_headers['date'] ) ) {
+                                printf( "Folder: %s UID: %d Date: %s Subject: %s\n", $folder_name, $uid, $msg_headers['date'], $msg_headers['subject'] );
+                            }
+                        }
+                    }
+                }
+            }
         }
-
-        /* get a nested structure that represents the MIME format of the message parts */
-        $struct = $imap->get_message_structure( 3 );
-
-        /* flatten the nested structure into a simple list of IMAP ids and MIME types */
-        $imap->flatten_bodystructure( $struct );
-
-        /* filter out text/plain mime types from the message structure */
-        $imap->search_bodystructure( $struct, array('type' => 'text', 'subtype' => 'plain'));
-
-        /* get message headers */
-        $imap->get_message_headers( 3, 1 );
-
-        /* get a message part content, or the entire message in a raw format */
-        $imap->get_message_content( 3, 1 );
-
-        /* start streaming message content */
-        $imap->start_message_stream( 3, 1 );
-
-        /* loop that reads in lines of a streamed message */
-        while ( $line = $imap->read_stream_line() ) { /* do something with $line */ }
     }
 
     /* disconnect from the IMAP server */
@@ -112,6 +167,6 @@ if ($imap->connect([
 }
 
 /* dump session information */
-$imap->debug();
+$imap->debug(false);
 
 ?>
