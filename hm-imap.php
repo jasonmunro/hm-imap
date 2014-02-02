@@ -490,7 +490,7 @@ class Hm_IMAP_Base {
                 }
                 break;
             case 'uid':
-                if (preg_match("/^\d+$/", $val)) {
+                if (ctype_digit((string) $val)) {
                     $valid = true;
                 }
                 break;
@@ -974,7 +974,7 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
      *
      * @return array list of flags
      */
-    function get_flag_values($vals) {
+    protected function get_flag_values($vals) {
         $collect_flags = false;
         $res = array();
         foreach ($vals as $i => $v) {
@@ -986,6 +986,26 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
             }
             if ($v == '(') {
                 $collect_flags = true;
+            }
+        }
+        return $res;
+    }
+    
+    /**
+     * return a flat list of message parts and IMAP part numbers
+     * from a nested BODYSTRUCTURE response
+     *
+     * @param $struct array nested BODYSTRUCTURE response
+     * 
+     * @return array list of message part details
+     */
+    protected function flatten_bodystructure($struct, $res=array()) {
+        foreach($struct as $id => $vals) {
+            if(isset($vals['subtype']) && isset($vals['type'])) {
+                $res[$id] = $vals['type'].'/'.$vals['subtype'];
+            }
+            if(isset($vals['subs'])) {
+                $res = $this->flatten_bodystructure($vals['subs'], $res);
             }
         }
         return $res;
@@ -1350,7 +1370,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array message structure represented as a nested array
      */
-    public function get_message_structure($uid, $filter=false) {
+    public function get_message_structure($uid, $filter=false, $flat_list=false) {
         if (!$this->is_clean($uid, 'uid')) {
             return array();
         }
@@ -1384,6 +1404,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         } 
         if ($filter) {
             return $this->filter_alternatives($struct, $filter);
+        }
+        if ($flat_list) {
+            return $this->flatten_bodystructure( $struct );
         }
         return $struct;
     }
@@ -1477,7 +1500,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             array_pop($result);
             foreach ($result as $vals) {
                 foreach ($vals as $v) {
-                    if (preg_match("/^\d+$/", $v)) {
+                    if (ctype_digit((string) $v)) {
                         $res[] = $v;
                     }
                 }
@@ -1602,7 +1625,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 $uids = array_merge($uids, $vals);
             }
             else {
-                if (preg_match("/^(\d)+$/", $vals[0])) {
+                if (ctype_digit((string) $vals[0])) {
                     $uids = array_merge($uids, $vals);
                 }
             }
