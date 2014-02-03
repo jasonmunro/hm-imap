@@ -31,10 +31,15 @@ class Hm_IMAP_Base {
     protected $current_command = false;  // current/latest IMAP command issued
     protected $max_read = false;         // limit on allowable read size
     protected $command_count = 0;        // current command number
+    protected $selected_mailbox = false; // details about the selected folder
+    protected $cache_keys = array();     // cache by folder keys
+    protected $cache_data = array();     // cache data
+
 
     /* attributes that can be set for the IMAP connaction */
     protected $config = array('server', 'starttls', 'port', 'tls', 'read_only',
-        'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max');
+        'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max',
+        'use_cache');
 
     /**
      * increment the imap command prefix such that it counts
@@ -240,6 +245,11 @@ class Hm_IMAP_Base {
      * @return array of parsed or raw results
      */
     protected function get_response($max=false, $chunked=false, $line_length=8192, $sort=false) {
+
+        $cache = $this->check_cache($this->current_command);
+        if ($cache) {
+            return $cache;
+        }
         /* defaults and results containers */
         $result = array();
         $current_size = 0;
@@ -348,7 +358,7 @@ class Hm_IMAP_Base {
             $start_time = $this->commands[$this->current_command];
             $this->commands[$this->current_command] = microtime(true) - $start_time;
         }
-        return $result;
+        return $this->cache_return_val($result);
     }
 
     /**
@@ -372,6 +382,11 @@ class Hm_IMAP_Base {
         /* single command */
         else {
             $command = 'A'.$this->command_number().' '.$command;
+        }
+        $cache = $this->check_cache($command, true);
+        if ($cache) {
+            $this->current_command = trim($command);
+            return;
         }
 
         /* send the command out to the server */
@@ -567,6 +582,102 @@ class Hm_IMAP_Base {
                 $this->debug[] = 'No response from STARTTLS command';
             }
         }
+    }
+
+    /**
+     * cache certain IMAP command return values for re-use
+     *
+     * @param $res array low level parsed IMAP response
+     * 
+     * @return array initial low level parsed IMAP response argument
+     */
+    private function cache_return_val($res) {
+        if (!$this->use_cache) {
+            return $res;
+        }
+        $command = trim(preg_replace("/^A\d+ /", '', $this->current_command));
+        if (strstr($command, 'SELECT') || strstr($command, 'LOGIN')) {
+            return $res;
+        }
+        if (strstr($command, 'LIST')) {
+            $this->cache_data['LIST'] = $res;
+        }
+        elseif (strstr($command, 'LSUB')) {
+            $this->cache_data['LSUB'] = $res;
+        }
+        elseif ($this->selected_mailbox) {
+            $key = sha1((string) $this->selected_mailbox[0].$this->selected_mailbox[1]['uidvalidity'].
+                $this->selected_mailbox[1]['uidnext'].$this->selected_mailbox[1]['exists']);
+            $box = $this->selected_mailbox[0];
+            if (isset($this->cache_keys[$box])) {
+                $old_key = $this->cache_keys[$box];
+            }
+            else {
+                $old_key = false;
+            }
+            if ($old_key && $old_key != $key) {
+                if (isset($this->cache_data[$old_key])) {
+                    unset($this->cache_data[$old_key]);
+                    $this->cache_data[$key] = array();
+                    $this->cache_keys[$box] = $key;
+                }
+            }
+            else {
+                if (!isset($this->cache_keys[$box])) {
+                    $this->cache_keys[$box] = $key;
+                }
+                if (!isset($this->cache_data[$key])) {
+                    $this->cache_data[$key] = array();
+                }
+            }
+            $this->cache_data[$key][$command] = $res;
+        }
+        return $res;
+    }
+
+    /**
+     * determine if the current command can be served from cache
+     *
+     * @param $command string IMAP command to check
+     * @param $check_only bool flag to avoid double logging
+     *
+     * @return mixed cached result or false if there is no cached data to use
+     */
+    private function check_cache( $command, $check_only=false ) {
+        if (!$this->use_cache) {
+            return false;
+        }
+        $command = trim(preg_replace("/^A\d+ /", '', $command));
+        $res = false;
+        $msg = '';
+        if (strstr($command, 'AUTHENTICATE') || strstr($command, 'SELECT') || strstr($command, 'LOGIN')) {
+            $res = false;
+        }
+        elseif (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'])) {
+            $msg = 'Cache hit with: '.$command;
+            $res = $this->cache_data['LIST'];
+        }
+        elseif (preg_match("/^LSUB /", $command) && isset($this->cache_data['LSUB'])) {
+            $msg = 'Cache hit with: '.$command;
+            $res = $this->cache_data['LSUB'];
+        }
+        elseif ($this->selected_mailbox) {
+            $box = $this->selected_mailbox[0];
+            if (isset($this->cache_keys[$box])) {
+                $key = $this->cache_keys[$box];
+                if (isset($this->cache_data[$key][$command])) {
+                    $msg = 'Cache hit for '.$box.' with: '.$command;
+                    $res = $this->cache_data[$key][$command];
+                }
+            }
+        }
+        if ($check_only) {
+            return $res ? true : false;
+        }
+        if ($msg) {
+            $this->debug[] = $msg;
+        }
+        return $res;
     }
 
 }
@@ -1008,13 +1119,13 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     public $auth = false;
     public $search_charset = '';
     public $sort_speedup = true;
+    public $use_cache = true;
     public $folder_max = 500;
 
     /* internal use */
     private $state = 'unconnected';
     private $stream_size = 0;
     private $capability = false;
-    private $selected_mailbox = false;
 
     /**
      * constructor
@@ -1047,7 +1158,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return void
      */
-    public function debug($full=false) {
+    public function show_debug($full=false) {
         printf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
         if ($full) {
             printf("Response %s", print_r($this->responses, true));
@@ -1125,11 +1236,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 $flags = $this->get_flag_values($vals);
             }
         }
-        if ($status) {
-            $this->state = 'selected';
-            $this->selected_mailbox = $box;
-        }
-        return array(
+        $res = array(
             'selected' => $status,
             'uidvalidity' => $uidvalidity,
             'exists' => $exists,
@@ -1138,6 +1245,11 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             'flags' => $flags,
             'permanentflags' => $pflags
         );
+        if ($status) {
+            $this->state = 'selected';
+            $this->selected_mailbox = array($box, $res);
+        }
+        return $res;
     }
 
     /**
@@ -2138,6 +2250,66 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             }
         }
         return $res;
+    }
+
+    /**
+     * invalidate parts of the data cache
+     *
+     * @param $type string can be one of LIST, LSUB, ALL, or a mailbox name
+     *
+     * @return void
+     */
+    public function bust_cache($type) {
+        if (!$this->use_cache) {
+            return;
+        }
+        switch($type) {
+            case 'LIST':
+                if (isset($this->cache_data['LIST'])) {
+                    unset($this->cache_data['LIST']);
+                }
+                break;
+            case 'LSUB':
+                if (isset($this->cache_data['LSUB'])) {
+                    unset($this->cache_data['LSUB']);
+                }
+                break;
+            case 'ALL':
+                $this->cache_keys = array();
+                $this->cache_data = array();
+                break;
+            default:
+                if (isset($this->cache_keys[$type])) {
+                    if(isset($this->cache_data[$this->cache_keys[$type]])) {
+                        unset($this->cache_data[$this->cache_keys[$type]]);
+                    }
+                    unset($this->cache_keys[$type]);
+                }
+                break;
+        }
+    }
+
+    /**
+     * output a string version of the cache that can be re-used
+     *
+     * @return string serialized version of the cache data
+     */
+    public function dump_cache() {
+        return serialize(array($this->cache_keys, $this->cache_data));
+    }
+
+    /**
+     * load cache data from the output of dump_cache()
+     *
+     * @param $data string serialized cache data from dump_cache()
+     * @return void
+     */
+    public function load_cache($data) {
+        $data = unserialize($data);
+        if (isset($data[0]) && isset($data[1])) {
+            $this->cache_keys = $data[0];
+            $this->cache_data = $data[1];
+        }
     }
 
 }
