@@ -245,7 +245,6 @@ class Hm_IMAP_Base {
      * @return array of parsed or raw results
      */
     protected function get_response($max=false, $chunked=false, $line_length=8192, $sort=false) {
-
         $cache = $this->check_cache($this->current_command);
         if ($cache) {
             return $cache;
@@ -1455,6 +1454,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         }
         return $headers;
     }
+
     /**
      * get the IMAP BODYSTRUCTURE of a message
      *
