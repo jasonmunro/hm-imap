@@ -109,7 +109,8 @@ if ($imap->connect([
 
                             /* print the folder, date, IMAP uid and subject of each message */
                             if ( isset( $msg_headers['subject'] ) && isset( $msg_headers['date'] ) ) {
-                                printf( "Folder: %s UID: %d Date: %s Subject: %s\n", $folder_name, $uid, $msg_headers['date'], $msg_headers['subject'] );
+                                printf( "Folder: %s UID: %d Date: %s Subject: %s\n", $folder_name,
+                                    $uid, $msg_headers['date'], $msg_headers['subject'] );
                             }
                         }
                     }
@@ -208,15 +209,15 @@ if ($imap->connect([
             /* debug is reset when we reconnect, so dump this session now */
             $imap->show_debug(false);
 
-            /* reconnect */
+            /* reconnect to the IMAP server */
             $imap->connect(array('username' => $username, 'password' => $password));
-            /* clear the current in memory cache in the $imap object */
 
             /* load the cache data we dumped */
             $imap->load_cache( $cache );
 
-            /* rerun the fetch command, should be served from cache. the debug
-             * output should contain a line like this:
+            /* rerun the fetch command, should be served from cache if the state
+             * of the INBOX has not changed since dump_cache() was called.
+             * The debug output should contain a line like this:
              *
              *      Cache hit for INBOX with: UID SORT (ARRIVAL) US-ASCII ALL
              */
