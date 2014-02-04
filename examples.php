@@ -143,16 +143,16 @@ if ($imap->connect([
         if ( $imap->select_mailbox( 'INBOX' )['selected'] ) {
 
             /* get the uids of unread messages in the selected mailbox */
-            $imap->get_unread_messages();
+            $imap->search('UNSEEN');
 
             /* get the headers and flags for the uid list */
             $imap->get_message_list( '1:10' );
 
             /* search the first 100 messages in the selected mailbox */
-            $imap->search( 'To', '1:100', 'search term' );
+            $imap->search( 'ALL', '1:100', 'To', 'search term' );
 
             /* get sorted list of message uids */
-            $imap->get_message_uids();
+            $imap->get_message_uids( 'ARRIVAL' );
 
             /* set the Flagged flag on a message */
             if ( $imap->message_action( 'FLAG', 3 ) ) {
@@ -207,7 +207,7 @@ if ($imap->connect([
             $imap->disconnect();
 
             /* debug is reset when we reconnect, so dump this session now */
-            $imap->show_debug(false);
+            $imap->show_debug( false );
 
             /* reconnect to the IMAP server */
             $imap->connect(array('username' => $username, 'password' => $password));
@@ -231,6 +231,6 @@ if ($imap->connect([
 }
 
 /* dump session information */
-$imap->show_debug(false);
+$imap->show_debug( false );
 
 ?>
