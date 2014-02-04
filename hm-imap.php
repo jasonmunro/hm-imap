@@ -2444,7 +2444,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array list of UIDs in the sort order
      */
-    function sort_by_fetch($sort, $reverse, $uid_str=false) {
+    public function sort_by_fetch($sort, $reverse, $uid_str=false) {
         if (!$this->is_clean($sort, 'keyword')) {
             return false;
         }
