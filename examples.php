@@ -58,8 +58,6 @@ if ($imap->connect([
 
         /* select the INBOX */
         $folder_detail = $imap->select_mailbox( 'INBOX' );
-        echo $folder_detail['exists'];
-        exit;
 
         /* check the status of the select */
         if ( $folder_detail['selected'] ) {
