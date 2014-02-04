@@ -28,6 +28,7 @@ class Hm_IMAP_Base {
     protected $debug = array();          // debug messages
     protected $commands = array();       // list of IMAP commands issued
     protected $responses = array();      // list of raw IMAP responses
+    protected $max_history = 1000;       // number of command/responses to save
     protected $current_command = false;  // current/latest IMAP command issued
     protected $max_read = false;         // limit on allowable read size
     protected $command_count = 0;        // current command number
@@ -356,6 +357,10 @@ class Hm_IMAP_Base {
         if ($this->current_command && isset($this->commands[$this->current_command])) {
             $start_time = $this->commands[$this->current_command];
             $this->commands[$this->current_command] = microtime(true) - $start_time;
+            if (count($this->commands) >= $this->max_history) {
+                array_shift($this->commands);
+                array_shift($this->responses);
+            }
         }
         if ($this->check_response($result, $chunked)) {
             return $this->cache_return_val($result);
@@ -2207,6 +2212,10 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $res = $this->get_response();
             $status = $this->check_response($res);
             if (!$status) {
+                $this->bust_cache( $this->selected_mailbox['name'] );
+                if ($mailbox) {
+                    $this->bust_cache($mailbox);
+                }
                 return $status;
             }
         }
@@ -2554,7 +2563,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
 
 }
 /* TODO:
- * - limit debug/command response array sizes
  * - add filter support to client sorting in get_mailbox_page method
  * - expand IMAP keyword support where possible
  * - extensions ...*/
