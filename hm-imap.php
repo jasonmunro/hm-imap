@@ -1718,7 +1718,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array list of IMAP message UIDs
      */
-    public function get_message_uids($sort='ARRIVAL', $reverse=true, $filter='ALL') {
+    public function get_message_sort_order($sort='ARRIVAL', $reverse=true, $filter='ALL') {
         if (!$this->is_clean($sort, 'keyword') || !$this->is_clean($filter, 'keyword')) {
             return false;
         }
@@ -2393,5 +2393,160 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         return false;
     }
 
+    /**
+     * return a list of headers and UIDs for a page of a mailbox
+     *
+     * @param $mailbox string the mailbox to access
+     * @param $sort string sort order. can be one of ARRIVAL, DATE, CC, TO, SUBJECT, FROM, or SIZE
+     * @param $filter string type of messages to include (UNREAD, ANSWERED, ALL, etc)
+     * @param $limit int max number of messages to return
+     * @param $offset int offset from the first message in the list
+     *
+     * @return array list of headers
+     */
+
+    public function get_mailbox_page($mailbox, $sort, $rev, $filter, $offset=0, $limit=0) {
+        $result = array();
+
+        /* select the mailbox if need be */
+        if (!$this->selected_mailbox || $this->selected_mailbox[0] != $mailbox) {
+            $this->select_mailbox($mailbox);
+        }
+
+        /* use the SORT extension if we can */
+        if (false && strstr($this->capability, 'SORT')) {
+            $uids = $this->get_message_sort_order($sort, $rev, $filter);
+        }
+        else {
+            $uids = $this->sort_by_fetch($sort, $rev);
+            /* filter support */
+        }
+        if ($limit) {
+            $uids = array_slice($uids, $offset, $limit, true);
+        }
+        if (!empty($uids)) {
+            $headers = $this->get_message_list($uids);
+            foreach($uids as $uid) {
+                if (isset($headers[$uid])) {
+                    $result[$uid] = $headers[$uid];
+                }
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * use FETCH to sort a list of uids when SORT is not available
+     *
+     * @param $sort string the sort field
+     * @param $reverse bool flag to reverse the results
+     * @param $uid_str string IMAP sequence set string or false
+     *
+     * @return array list of UIDs in the sort order
+     */
+    function sort_by_fetch($sort, $reverse, $uid_str=false) {
+        if (!$this->is_clean($sort, 'keyword')) {
+            return false;
+        }
+        if ($uid_str) {
+            $command1 = 'UID FETCH '.$uid_str.' ';
+        }
+        else {
+            $command1 = 'UID FETCH 1:* ';
+        }
+        switch ($sort) {
+            case 'DATE':
+                $command2 = "BODY.PEEK[HEADER.FIELDS (DATE)]\r\n";
+                $key = "BODY[HEADER.FIELDS";
+                break;
+            case 'SIZE':
+                $command2 = "RFC822.SIZE\r\n";
+                $key = "RFC822.SIZE";
+                break;
+            case 'FROM':
+                $command2 = "BODY.PEEK[HEADER.FIELDS (FROM)]\r\n";
+                $key = "BODY[HEADER.FIELDS";
+                break;
+            case 'SUBJECT':
+                $command2 = "BODY.PEEK[HEADER.FIELDS (SUBJECT)]\r\n";
+                $key = "BODY[HEADER.FIELDS";
+                break;
+            case 'ARRIVAL':
+            default:
+                $command2 = "INTERNALDATE\r\n";
+                $key = "INTERNALDATE";
+                break;
+        }
+        $command = $command1.$command2;
+        $this->send_command($command);
+        $res = $this->get_response(false, true);
+        $status = $this->check_response($res, true);
+        $uids = array();
+        $sort_keys = array();
+        foreach ($res as $vals) {
+            if (!isset($vals[0]) || $vals[0] != '*') {
+                continue;
+            }
+            $uid = 0;
+            $sort_key = 0;
+            $body = false;
+            foreach ($vals as $i => $v) {
+                if ($body) {
+                    if ($v == ']' && isset($vals[$i + 1])) {
+                        if ($command2 == "BODY.PEEK[HEADER.FIELDS (DATE)]\r\n") {
+                            $sort_key = strtotime(trim(substr($vals[$i + 1], 5)));
+                        }
+                        else {
+                            $sort_key = $vals[$i + 1];
+                        }
+                        $body = false;
+                    }
+                }
+                if (strtoupper($v) == 'UID') {
+                    if (isset($vals[($i + 1)])) {
+                        $uid = $vals[$i + 1];
+                        $uids[] = $uid;
+                    }
+                }
+                if ($key == strtoupper($v)) {
+                    if (substr($key, 0, 4) == 'BODY') {
+                        $body = 1;
+                    }
+                    elseif (isset($vals[($i + 1)])) {
+                        if ($key == "INTERNALDATE") {
+                            $sort_key = strtotime($vals[$i + 1]);
+                        }
+                        else {
+                            $sort_key = $vals[$i + 1];
+                        }
+                    }
+                }
+            }
+            if ($sort_key && $uid) {
+                $sort_keys[$uid] = $sort_key;
+            }
+        }
+        if (count($sort_keys) != count($uids)) {
+            if (count($sort_keys) < count($uids)) {
+                foreach ($uids as $v) {
+                    if (!isset($sort_keys[$v])) {
+                        $sort_keys[$v] = false;
+                    }
+                }
+            }
+        }
+        natcasesort($sort_keys);
+        $uids = array_keys($sort_keys);
+        if ($reverse) {
+            $uids = array_reverse($uids);
+        }
+        return $uids;
+    }
+
 }
+/* TODO:
+ * - limit debug/command response array sizes
+ * - add filter support to client sorting in get_mailbox_page method
+ * - expand IMAP keyword support where possible
+ * - extensions ...*/
 ?>
