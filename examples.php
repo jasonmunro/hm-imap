@@ -63,7 +63,7 @@ if ($imap->connect([
         if ( $folder_detail['selected'] ) {
 
             /* get the message UIDs in arrival order */
-            $uids = $imap->get_message_uids( 'ARRIVAL', true, 'ALL' );
+            $uids = $imap->get_message_sort_order( 'ARRIVAL', true, 'ALL' );
 
             /* if the INBOX is not empty continue */
             if ( ! empty( $uids ) ) {
@@ -96,7 +96,7 @@ if ($imap->connect([
                 if ($folder_detail['selected']) {
 
                     /* get all unread IMAP uids from this folder */
-                    $uids = $imap->get_message_uids( 'ARRIVAL', true, 'UNSEEN' );
+                    $uids = $imap->get_message_sort_order( 'ARRIVAL', true, 'UNSEEN' );
 
                     /* did we find unread messages? */
                     if ( ! empty( $uids ) ) {
@@ -152,7 +152,7 @@ if ($imap->connect([
             $imap->search( 'ALL', '1:100', 'To', 'search term' );
 
             /* get sorted list of message uids */
-            $imap->get_message_uids( 'ARRIVAL' );
+            $imap->get_message_sort_order( 'ARRIVAL' );
 
             /* set the Flagged flag on a message */
             if ( $imap->message_action( 'FLAG', 3 ) ) {
@@ -183,6 +183,10 @@ if ($imap->connect([
             $imap->get_message_content( 3, 1 );
 
         }
+
+        /* high level function that handles a lot of behind the scenes work. returns a list of message headers
+         * for the request "page" of the mailbox. */
+        $imap->get_mailbox_page('INBOX', 'ARRIVAL', true, 'ALL', 0, 5);
     }
 
     /* use the cache related functions */
@@ -195,7 +199,7 @@ if ($imap->connect([
         if ( $imap->select_mailbox( 'INBOX' )['selected'] ) {
 
             /* fetch the UIDs, this result should be cached */
-            $imap->get_message_uids();
+            $imap->get_message_sort_order();
 
             /* dump the cache into a local variable */
             $cache = $imap->dump_cache();
@@ -222,7 +226,7 @@ if ($imap->connect([
              *      Cache hit for INBOX with: UID SORT (ARRIVAL) US-ASCII ALL
              */
             if ( $imap->select_mailbox( 'INBOX' )['selected'] ) {
-                $imap->get_message_uids();
+                $imap->get_message_sort_order();
             }
         }
     }
