@@ -34,6 +34,7 @@ class Hm_IMAP_Base {
     protected $selected_mailbox = false; // details about the selected folder
     protected $cache_keys = array();     // cache by folder keys
     protected $cache_data = array();     // cache data
+    protected $cached_response = false;  // flag to indicate we are using a cached response
 
 
     /* attributes that can be set for the IMAP connaction */
@@ -369,6 +370,7 @@ class Hm_IMAP_Base {
      * @return void
      */
     protected function send_command($command, $piped=false) {
+        $this->cached_response = false;
         /* pipelined commands are sent in bunches. Improves performance */
         if ($piped) {
             $final_command = '';
@@ -413,6 +415,9 @@ class Hm_IMAP_Base {
      * @return bool true to indicate a success response from the IMAP server
      */
     protected function check_response($data, $chunked=false) {
+        if ($this->cached_response) {
+            return true;
+        }
         $result = false;
 
         /* find the last bit of the parsed response and look for the OK atom */
@@ -674,6 +679,7 @@ class Hm_IMAP_Base {
             return $res ? true : false;
         }
         if ($msg) {
+            $this->cached_response = true;
             $this->debug[] = $msg;
         }
         return $res;
@@ -1412,7 +1418,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                         foreach ($lines as $line) {
                             $header = strtolower(substr($line, 0, strpos($line, ':')));
                             if (!$header || (!isset($flds[$header]) && $last_header)) {
-                                ${$flds[$last_header]} .= "\r\n".$line;
+                                ${$flds[$last_header]} .= ' '.trim($line);
                             }
                             elseif (isset($flds[$header])) {
                                 ${$flds[$header]} = substr($line, (strpos($line, ':') + 1));
@@ -1505,20 +1511,22 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
     /**
-     * get a message content
+     * get content for a message part
      *
      * @param $uid int a single IMAP message UID
      * @param $message_part string the IMAP message part number
      * @param $raw bool flag to enabled fetching the entire message as text
-     * @param $max int maximum read length to allow
+     * @param $max int maximum read length to allow.
+     * @param $struct mixed a message part structure array for decoding and
+     *                      charset conversion. bool true for auto discovery
      *
      * @return string message content
      */
-    public function get_message_content($uid, $message_part, $raw=false, $max=false) {
+    public function get_message_content($uid, $message_part, $max=false, $struct=true) {
         if (!$this->is_clean($uid, 'uid')) {
             return '';
         }
-        if ($raw) {
+        if ($message_part == 0) {
             $command = "UID FETCH $uid BODY[]\r\n";
         }
         else {
@@ -1548,6 +1556,26 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 if (stristr(strtoupper($v), 'BODY')) {
                     $search = false;
                 }
+            }
+        }
+        if ($struct === true) {
+            $full_struct = $this->get_message_structure( $uid );
+            $part_struct = $this->search_bodystructure( $full_struct, array('imap_part_number' => $message_part));
+            if (isset($part_struct[$message_part])) {
+                $struct = $part_struct[$message_part];
+            }
+        }
+        if (is_array($struct)) {
+            if (isset($struct['encoding']) && $struct['encoding']) {
+                if ($struct['encoding'] == 'quoted-printable') {
+                    $res = quoted_printable_decode($res);
+                }
+                if ($struct['encoding'] == 'base64') {
+                    $res = base64_decode($res);
+                }
+            }
+            if (isset($struct['charset']) && $struct['charset']) {
+                $res = mb_convert_encoding($res, 'UTF-8', $struct['charset']);
             }
         }
         return $res;
@@ -2235,16 +2263,19 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array array of all matching parts from the message
      */
-    public function search_bodystructure($struct, $search_flds, $res=array()) {
+    public function search_bodystructure($struct, $search_flds, $all=true, $res=array()) {
         foreach ($struct as $id => $vals) {
             if (!is_array($vals)) {
                 continue;
             }
             $match_count = count($search_flds);
             $matches = 0;
+            if (isset($search_flds['imap_part_number']) && $id == $search_flds['imap_part_number']) {
+                $matches++;
+            }
             foreach ($vals as $name => $val) {
                 if ($name == 'subs') {
-                    $res = $this->search_bodystructure($val, $search_flds, $res);
+                    $res = $this->search_bodystructure($val, $search_flds, $all, $res);
                 }
                 elseif (isset($search_flds[$name]) && stristr($val, $search_flds[$name])) {
                     $matches++;
@@ -2256,6 +2287,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                     $part['subs'] = count($part['subs']);
                 }
                 $res[$id] = $part;
+                if (!$all) {
+                    return $res;
+                }
             }
         }
         return $res;
