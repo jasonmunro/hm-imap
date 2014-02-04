@@ -10,7 +10,7 @@
  * and tweak the server/port/etc/ for your particular setup.
  */
 
-define( 'INBOX_LISTING',        true ); /* gets the first 10 messages by arrival time and prints their headers */
+define( 'INBOX_LISTING',        true ); /* gets the first 5 messages by arrival time and prints their headers */
 define( 'NEW_MESSAGE_CHECK',    true ); /* gets the subjects of the 5 newest messages in each mailbox */
 define( 'ALL_COMMANDS_EXAMPLE', true ); /* runs all the IMAP commands in the class */
 define( 'CACHE_USE_EXAMPLE',    true ); /* uses the built in caching system */
@@ -53,11 +53,13 @@ if ($imap->connect([
     'folder_max'     => 500 ])) {     // maximum number of mailboxes to fetch in get_mailbox_list()
 
 
-    /* display the first 10 message headers in the inbox */
+    /* display the first 5 message headers in the inbox */
     if ( INBOX_LISTING ) {
 
         /* select the INBOX */
         $folder_detail = $imap->select_mailbox( 'INBOX' );
+        echo $folder_detail['exists'];
+        exit;
 
         /* check the status of the select */
         if ( $folder_detail['selected'] ) {
@@ -68,8 +70,8 @@ if ($imap->connect([
             /* if the INBOX is not empty continue */
             if ( ! empty( $uids ) ) {
 
-                /* get the list of header values for the first 10 UIDs */
-                $msg_headers = $imap->get_message_list( array_slice( $uids, 0, 10 ) );
+                /* get the list of header values for the first 5 UIDs */
+                $msg_headers = $imap->get_message_list( array_slice( $uids, 0, 5 ) );
 
                 /* dump the headers */
                 print_r( $msg_headers );
@@ -185,7 +187,7 @@ if ($imap->connect([
         }
 
         /* high level function that handles a lot of behind the scenes work. returns a list of message headers
-         * for the request "page" of the mailbox. */
+         * for the requested "page" of the mailbox. */
         $imap->get_mailbox_page('INBOX', 'ARRIVAL', true, 'ALL', 0, 5);
     }
 
