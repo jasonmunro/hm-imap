@@ -1368,7 +1368,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array list of headers and values for the specified uids
      */
-    public function get_message_list($uids) {
+    public function get_message_list($uids, $raw=false) {
         if (is_array($uids)) {
             sort($uids);
             $sorted_string = implode(',', $uids);
@@ -1448,7 +1448,13 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                                      'date' => $date, 'from' => $from, 'to' => $to, 'subject' => $subject, 'content-type' => $content_type,
                                      'timestamp' => time(), 'charset' => $cset, 'x-priority' => $x_priority);
 
-                    $headers[$uid] = array_map('trim', $headers[$uid]);
+                    if ($raw) {
+                        $headers[$uid] = array_map('trim', $headers[$uid]);
+                    }
+                    else {
+                        $headers[$uid] = array_map(array($this, 'decode_fld'), $headers[$uid]);
+                    }
+
                 }
             }
         }
@@ -1604,7 +1610,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array associate array of message headers
      */
-    public function get_message_headers($uid, $message_part) {
+    public function get_message_headers($uid, $message_part, $raw=false) {
         if (!$this->is_clean($uid, 'uid')) {
             return array();
         }
@@ -1676,6 +1682,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         }
         $results = array();
         foreach ($headers as $vals) {
+            if (!$raw) {
+                $vals[1] = $this->decode_fld($vals[1]);
+            }
             $results[$vals[0]] = $vals[1];
         }
         return $results;
@@ -2311,6 +2320,33 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $this->cache_data = $data[1];
         }
     }
+
+    /**
+     * decode mail fields to human readable text
+     *
+     * @param $string string field to decode
+     *
+     * @return string decoded field
+     */
+    public function decode_fld($string) {
+        if (preg_match_all("/(=\?[^\?]+\?(q|b)\?[^\?]+\?=)/i", $string, $matches)) {
+            foreach ($matches[1] as $v) {
+                $fld = substr($v, 2, -2);
+                $charset = strtolower(substr($fld, 0, strpos($fld, '?')));
+                $fld = substr($fld, (strlen($charset) + 1));
+                $encoding = $fld{0};
+                $fld = substr($fld, (strpos($fld, '?') + 1));
+                if (strtoupper($encoding) == 'B') {
+                    $fld = mb_convert_encoding(base64_decode($fld), 'UTF-8', $charset);
+                }
+                elseif (strtoupper($encoding) == 'Q') {
+                    $fld = mb_convert_encoding(quoted_printable_decode($fld), 'UTF-8', $charset);
+                }
+                $string = str_replace($v, $fld, $string);
+            }
+        }
+        return trim($string);
+    } 
 
 }
 ?>
