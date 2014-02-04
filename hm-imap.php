@@ -31,7 +31,6 @@ class Hm_IMAP_Base {
     protected $current_command = false;  // current/latest IMAP command issued
     protected $max_read = false;         // limit on allowable read size
     protected $command_count = 0;        // current command number
-    protected $selected_mailbox = false; // details about the selected folder
     protected $cache_keys = array();     // cache by folder keys
     protected $cache_data = array();     // cache data
     protected $cached_response = false;  // flag to indicate we are using a cached response
@@ -615,9 +614,9 @@ class Hm_IMAP_Base {
             $this->cache_data['LSUB'] = $res;
         }
         elseif ($this->selected_mailbox) {
-            $key = sha1((string) $this->selected_mailbox[0].$this->selected_mailbox[1]['uidvalidity'].
-                $this->selected_mailbox[1]['uidnext'].$this->selected_mailbox[1]['exists']);
-            $box = $this->selected_mailbox[0];
+            $key = sha1((string) $this->selected_mailbox['name'].$this->selected_mailbox['detail']['uidvalidity'].
+                $this->selected_mailbox['detail']['uidnext'].$this->selected_mailbox['detail']['exists']);
+            $box = $this->selected_mailbox['name'];
             if (isset($this->cache_keys[$box])) {
                 $old_key = $this->cache_keys[$box];
             }
@@ -673,7 +672,7 @@ class Hm_IMAP_Base {
             $res = $this->cache_data['LSUB'];
         }
         elseif ($this->selected_mailbox) {
-            $box = $this->selected_mailbox[0];
+            $box = $this->selected_mailbox['name'];
             if (isset($this->cache_keys[$box])) {
                 $key = $this->cache_keys[$box];
                 if (isset($this->cache_data[$key][$command])) {
@@ -1134,6 +1133,8 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     public $use_cache = true;
     public $folder_max = 500;
 
+    public $selected_mailbox = false;
+
     /* internal use */
     private $state = 'unconnected';
     private $stream_size = 0;
@@ -1235,7 +1236,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         );
         if ($status) {
             $this->state = 'selected';
-            $this->selected_mailbox = array($box, $res);
+            $this->selected_mailbox = array('name' => $box, 'detail' => $res);
         }
         return $res;
     }
@@ -2409,7 +2410,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $result = array();
 
         /* select the mailbox if need be */
-        if (!$this->selected_mailbox || $this->selected_mailbox[0] != $mailbox) {
+        if (!$this->selected_mailbox || $this->selected_mailbox['name'] != $mailbox) {
             $this->select_mailbox($mailbox);
         }
 
@@ -2462,6 +2463,14 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             case 'SIZE':
                 $command2 = "RFC822.SIZE\r\n";
                 $key = "RFC822.SIZE";
+                break;
+            case 'TO':
+                $command2 = "BODY.PEEK[HEADER.FIELDS (TO)]\r\n";
+                $key = "BODY[HEADER.FIELDS";
+                break;
+            case 'CC':
+                $command2 = "BODY.PEEK[HEADER.FIELDS (CC)]\r\n";
+                $key = "BODY[HEADER.FIELDS";
                 break;
             case 'FROM':
                 $command2 = "BODY.PEEK[HEADER.FIELDS (FROM)]\r\n";
