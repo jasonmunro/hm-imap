@@ -358,7 +358,12 @@ class Hm_IMAP_Base {
             $start_time = $this->commands[$this->current_command];
             $this->commands[$this->current_command] = microtime(true) - $start_time;
         }
-        return $this->cache_return_val($result);
+        if ($this->check_response($result, $chunked)) {
+            return $this->cache_return_val($result);
+        }
+        else {
+            return $result;
+        }
     }
 
     /**
