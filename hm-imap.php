@@ -419,8 +419,8 @@ class Hm_IMAP_Base {
      *
      * @return bool true to indicate a success response from the IMAP server
      */
-    protected function check_response($data, $chunked=false) {
-        if ($this->cached_response) {
+    protected function check_response($data, $chunked=false, $stream=false) {
+        if ($this->cached_response || strstr($this->current_command, 'LOGOUT')) {
             return true;
         }
         $result = false;
@@ -443,6 +443,9 @@ class Hm_IMAP_Base {
             if (preg_match("/^A".$this->command_count." OK/i", $line)) {
                 $result = true;
             }
+        }
+        if (!$result && !$stream) {
+            $this->debug[] = 'Command FAILED: '.$this->current_command;
         }
         return $result;
     }
@@ -605,9 +608,6 @@ class Hm_IMAP_Base {
             return $res;
         }
         $command = trim(preg_replace("/^A\d+ /", '', $this->current_command));
-        if (strstr($command, 'SELECT') || strstr($command, 'LOGIN')) {
-            return $res;
-        }
         if (strstr($command, 'LIST')) {
             $this->cache_data['LIST'] = $res;
         }
@@ -639,7 +639,9 @@ class Hm_IMAP_Base {
                     $this->cache_data[$key] = array();
                 }
             }
-            $this->cache_data[$key][$command] = $res;
+            if (!strstr($command, 'SELECT') && !strstr($command, 'EXAMINE') && !strstr($command, 'LOGIN')) {
+                $this->cache_data[$key][$command] = $res;
+            }
         }
         return $res;
     }
@@ -659,7 +661,7 @@ class Hm_IMAP_Base {
         $command = trim(preg_replace("/^A\d+ /", '', $command));
         $res = false;
         $msg = '';
-        if (strstr($command, 'AUTHENTICATE') || strstr($command, 'SELECT') || strstr($command, 'LOGIN')) {
+        if (strstr($command, 'AUTHENTICATE') || strstr($command, 'SELECT') || strstr($command, 'LOGIN') || strstr($command, 'EXAMINE')) {
             $res = false;
         }
         elseif (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'])) {
@@ -1176,30 +1178,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
     /**
-     * get unseen message UIDS for a mailbox
-     *
-     * @return array list of IMAP message uids
-     */
-    public function get_unread_messages() {
-        $command = "UID SEARCH (UNSEEN) ALL\r\n";
-        $this->send_command($command);
-        $res = $this->get_response(false, true);
-        $status = $this->check_response($res, true);
-        $uids = array();
-        if ($status) {
-            array_pop($res);
-            foreach ($res as $vals) {
-                foreach ($vals as $v) {
-                    if (intval($v)) {
-                        $uids[] = $v;
-                    }
-                }
-            }
-        }
-        return $uids;
-    }
-
-    /**
      * select a mailbox
      *
      * @param $mailbox string the mailbox to attempt to select
@@ -1376,6 +1354,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      * return a header list for the supplied message uids
      *
      * @param $uids array/string an array of uids or a valid IMAP sequence set as a string
+     * @param $raw bool flag to disable decoding header values
      *
      * @return array list of headers and values for the specified uids
      */
@@ -1589,14 +1568,15 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     /**
      * search a field for a keyword
      *
-     * @param $fld string field to search
-     * @param $uids array/string an array of uids or a valid IMAP sequence set as a string
-     * @param $term string search term
+     * @param $target string message types to search. can be ALL, UNSEEN, ANSWERED, etc
+     * @param $uids array/string an array of uids or a valid IMAP sequence set as a string (or false for ALL)
+     * @param $fld string optional field to search
+     * @param $term string optional search term
      *
      * @return array list of IMAP message UIDs that match the search
      */
-    public function search($fld, $uids, $term) {
-        if (!$this->is_clean($fld, 'search_str') || !$this->is_clean($this->search_charset, 'charset') || !$this->is_clean($term, 'search_str')) {
+    public function search($target='ALL', $uids=false, $fld=false, $term=false) {
+        if (($fld && !$this->is_clean($fld, 'search_str')) || !$this->is_clean($this->search_charset, 'charset') || ($term && !$this->is_clean($term, 'search_str')) || !$this->is_clean($target, 'keyword')) {
             return array();
         }
         if (!empty($uids)) {
@@ -1615,9 +1595,15 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $charset = 'CHARSET '.strtoupper($this->search_charset).' ';
         }
         else {
-            $charset = '';
+            $charset = ' ';
         }
-        $command = 'UID SEARCH '.$charset.$uids.' '.$fld.' "'.str_replace('"', '\"', $term)."\"\r\n";
+        if ($fld && $term) {
+            $fld = ' '.$fld.' "'.str_replace('"', '\"', $term).'"';
+        }
+        else {
+            $fld = '';
+        }
+        $command = 'UID SEARCH ('.$target.')'.$charset.$uids.$fld."\r\n";
         $this->send_command($command);
         $result = $this->get_response(false, true);
         $status = $this->check_response($result, true);
@@ -2049,7 +2035,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             while(substr($res, -2) != "\r\n") {
                 $res .= $this->fgets($size);
             }
-            if ($this->check_response(array($res))) {
+            if ($this->check_response(array($res), false, true)) {
                 $res = false;
             }
             if ($res) {
@@ -2386,6 +2372,26 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         }
         return trim($string);
     } 
+
+    /**
+     * return the formatted message content of the first part that matches the supplied MIME type
+     *
+     * @param $uid int IMAP UID value for the message
+     * @param $type string Primary MIME type like "text"
+     * @param $subtype string Secondary MIME type like "plain"
+     *
+     * @return string formatted message content, bool false if no matching part is found
+     */
+    public function get_first_message_part($uid, $type, $subtype) {
+        $struct = $this->get_message_structure($uid);
+        $matches = $this->search_bodystructure($struct, array('type' => $type, 'subtype' => $subtype), false);
+        if (!empty($matches)) {
+            $msg_part_num = array_slice(array_keys($matches), 0, 1)[0];
+            $struct = array_slice($matches, 0, 1)[0];
+            return ($this->get_message_content($uid, $msg_part_num, false, $struct));
+        } 
+        return false;
+    }
 
 }
 ?>
