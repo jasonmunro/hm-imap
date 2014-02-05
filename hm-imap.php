@@ -2448,7 +2448,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if (!$this->selected_mailbox || $this->selected_mailbox['name'] != $mailbox) {
             $this->select_mailbox($mailbox);
         }
-        
+ 
         /* use the SORT extension if we can */
         if (strstr($this->capability, 'SORT')) {
             $uids = $this->get_message_sort_order($sort, $rev, $filter);
