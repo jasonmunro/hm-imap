@@ -60,7 +60,7 @@ assert_equal( true, is_array( $unseen_uids) );
 assert_equal( true, !empty( $unseen_uids ) );
 assert_equal( true, ctype_digit( $unseen_uids[0] ) );
 
-$search_res = $imap->search( 'ALL', '1:100', 'To', 'root' );
+$search_res = $imap->search( 'ALL', '1:100', 'To', 'jason' );
 assert_equal( true, is_array( $search_res ) );
 assert_equal( true, !empty( $search_res ) );
 assert_equal( true, ctype_digit( $search_res[0] ) );
@@ -88,10 +88,10 @@ assert_equal( $struct, $struct_part );
 $headers = $imap->get_message_headers( 3, 1 );
 assert_equal( true, is_array( $headers ) );
 assert_equal( true, !empty( $headers ) );
-assert_equal( 'root@macbook', $headers['To'] ); 
+assert_equal( 'jason@shop.localdomain', $headers['To'] ); 
 
 $size = $imap->start_message_stream( 3, 1 );
-assert_equal( 898, $size ); 
+assert_equal( 10, $size ); 
 
 while ( $text = $imap->read_stream_line() ) {
     assert_equal( true, strlen( $text ) > 0 );
@@ -117,7 +117,7 @@ assert_equal( 'jason', $fld );
 $sorted_uids = $imap->sort_by_fetch( 'ARRIVAL', true, 'UNSEEN' );
 assert_equal( true, is_array( $sorted_uids ) );
 assert_equal( true, !empty( $sorted_uids ) );
-assert_equal( 207, $sorted_uids[0] );
+assert_equal( 25, $sorted_uids[0] );
 
 $nspaces = $imap->get_namespaces();
 assert_equal( true, is_array( $nspaces ) );
@@ -145,14 +145,14 @@ assert_equal( true, $unflagged );
 $imap->disconnect();
 assert_equal( 'disconnected', $imap->get_state() );
 
-$imap->show_debug( false );
-printf( "\nTests passed: %d\n\n", $passed );
-
 $cache = $imap->dump_cache();
 $imap->bust_cache( 'ALL' );
 $imap->load_cache( $cache );
 assert_equal( true, strlen($cache) > 0 );
 
+
+$imap->show_debug( false );
+printf( "\nTests passed: %d\n\n", $passed );
 
 
 /* helper function for test result checking */
