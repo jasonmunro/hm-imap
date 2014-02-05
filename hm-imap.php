@@ -1128,7 +1128,6 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
      */ 
     protected function flag_match($filter, $flags) {
         $res = false;
-
         switch($filter) {
             case 'ANSWERED':
             case 'SEEN':
@@ -1169,7 +1168,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     public $selected_mailbox = false;
 
     /* internal use */
-    private $state = 'unconnected';
+    private $state = 'disconnected';
     private $stream_size = 0;
     private $capability = false;
 
@@ -1375,7 +1374,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      */
     public function disconnect() {
         $command = "LOGOUT\r\n";
-        $this->state = 'unconnected';
+        $this->state = 'disconnected';
         $this->selected_mailbox = false;
         $this->send_command($command);
         $result = $this->get_response();
@@ -2254,7 +2253,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      * returns current IMAP state
      *
      * @return string one of:
-     *                unconnected   = no IMAP server TCP connection
+     *                disconnected  = no IMAP server TCP connection
      *                connected     = an IMAP server TCP connection exists
      *                authenticated = successfully authenticated to the IMAP server
      *                selected      = a mailbox has been selected
@@ -2562,7 +2561,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 if (strtoupper($v) == 'UID') {
                     if (isset($vals[($i + 1)])) {
                         $uid = $vals[$i + 1];
-                        $uids[] = $uid;
                     }
                 }
                 if ($key == strtoupper($v)) {
@@ -2581,6 +2579,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             }
             if ($sort_key && $uid) {
                 $sort_keys[$uid] = $sort_key;
+                $uids[] = $uid;
             }
         }
         if (count($sort_keys) != count($uids)) {
@@ -2601,4 +2600,5 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
 }
+
 ?>
