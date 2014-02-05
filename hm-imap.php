@@ -1118,14 +1118,14 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
         return $res;
     }
 
-   /**
-    * compare filter keywords against message flags
-    *
-    * @param $filter string message type to filter by
-    * @param $flags string IMAP flag value string
-    *
-    * @return bool true if the message matches the filter
-    */ 
+    /**
+     * compare filter keywords against message flags
+     *
+     * @param $filter string message type to filter by
+     * @param $flags string IMAP flag value string
+     *
+     * @return bool true if the message matches the filter
+     */ 
     protected function flag_match($filter, $flags) {
         $res = false;
 
