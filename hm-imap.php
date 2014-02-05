@@ -2238,12 +2238,11 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $this->send_command($command);
             $res = $this->get_response();
             $status = $this->check_response($res);
-            if (!$status) {
+            if ($status) {
                 $this->bust_cache( $this->selected_mailbox['name'] );
                 if ($mailbox) {
                     $this->bust_cache($mailbox);
                 }
-                return $status;
             }
         }
         return $status;
