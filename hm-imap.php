@@ -28,7 +28,6 @@ class Hm_IMAP_Base {
     protected $debug = array();          // debug messages
     protected $commands = array();       // list of IMAP commands issued
     protected $responses = array();      // list of raw IMAP responses
-    protected $max_history = 1000;       // number of command/responses to save
     protected $current_command = false;  // current/latest IMAP command issued
     protected $max_read = false;         // limit on allowable read size
     protected $command_count = 0;        // current command number
@@ -40,7 +39,7 @@ class Hm_IMAP_Base {
     /* attributes that can be set for the IMAP connaction */
     protected $config = array('server', 'starttls', 'port', 'tls', 'read_only',
         'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max',
-        'use_cache');
+        'use_cache', 'max_history');
 
     /**
      * increment the imap command prefix such that it counts
@@ -1164,6 +1163,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     public $sort_speedup = true;
     public $use_cache = true;
     public $folder_max = 500;
+    public $max_history = 1000;
 
     public $selected_mailbox = false;
 
@@ -2448,17 +2448,23 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if (!$this->selected_mailbox || $this->selected_mailbox['name'] != $mailbox) {
             $this->select_mailbox($mailbox);
         }
-
+        
         /* use the SORT extension if we can */
         if (strstr($this->capability, 'SORT')) {
             $uids = $this->get_message_sort_order($sort, $rev, $filter);
         }
+
+        /* fall back to using FETCH and manually sorting */
         else {
             $uids = $this->sort_by_fetch($sort, $rev, $filter);
         }
+
+        /* reduce to one page */
         if ($limit) {
             $uids = array_slice($uids, $offset, $limit, true);
         }
+
+        /* get the headers and build a result array by UID */
         if (!empty($uids)) {
             $headers = $this->get_message_list($uids);
             foreach($uids as $uid) {
