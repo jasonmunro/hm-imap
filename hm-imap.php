@@ -501,7 +501,7 @@ class Hm_IMAP_Base {
             'CC',         'TO',      'SIZE',      'UNSEEN',
             'SEEN',       'FLAGGED', 'UNFLAGGED', 'ANSWERED',
             'UNANSWERED', 'DELETED', 'UNDELETED', 'TEXT',
-            'ALL',
+            'ALL', 'DRAFT', 'NEW', 'RECENT', 'OLD', 'UNDRAFT'
         );
         $valid = false;
         switch ($type) {
@@ -1117,7 +1117,36 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
         }
         return $res;
     }
-    
+
+   /**
+    * compare filter keywords against message flags
+    *
+    * @param $filter string message type to filter by
+    * @param $flags string IMAP flag value string
+    *
+    * @return bool true if the message matches the filter
+    */ 
+    protected function flag_match($filter, $flags) {
+        $res = false;
+
+        switch($filter) {
+            case 'ANSWERED':
+            case 'SEEN':
+            case 'DRAFT':
+            case 'DELETED':
+                $res = stristr($flags, $filter);
+                break;
+            case 'UNSEEN':
+            case 'UNDRAFT':
+            case 'UNDELETED':
+            case 'UNFLAGGED':
+            case 'UNANSWERED':
+                $res = !stristr($flags, str_replace('UN', '', $filter));
+                break;
+        }
+        printf("filter: %s; flags: %s; result: %s\n", $filter, $flags, $res);
+        return $res;
+    }
 
 }
 
@@ -2408,7 +2437,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @param $mailbox string the mailbox to access
      * @param $sort string sort order. can be one of ARRIVAL, DATE, CC, TO, SUBJECT, FROM, or SIZE
-     * @param $filter string type of messages to include (UNREAD, ANSWERED, ALL, etc)
+     * @param $filter string type of messages to include (UNSEEN, ANSWERED, ALL, etc)
      * @param $limit int max number of messages to return
      * @param $offset int offset from the first message in the list
      *
@@ -2424,12 +2453,11 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         }
 
         /* use the SORT extension if we can */
-        if (false && strstr($this->capability, 'SORT')) {
+        if (strstr($this->capability, 'SORT')) {
             $uids = $this->get_message_sort_order($sort, $rev, $filter);
         }
         else {
-            $uids = $this->sort_by_fetch($sort, $rev);
-            /* filter support */
+            $uids = $this->sort_by_fetch($sort, $rev, $filter);
         }
         if ($limit) {
             $uids = array_slice($uids, $offset, $limit, true);
@@ -2450,48 +2478,49 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @param $sort string the sort field
      * @param $reverse bool flag to reverse the results
+     * @param $filter string IMAP message type (UNSEEN, ANSWERED, DELETED, etc)
      * @param $uid_str string IMAP sequence set string or false
      *
      * @return array list of UIDs in the sort order
      */
-    public function sort_by_fetch($sort, $reverse, $uid_str=false) {
+    public function sort_by_fetch($sort, $reverse, $filter, $uid_str=false) {
         if (!$this->is_clean($sort, 'keyword')) {
             return false;
         }
         if ($uid_str) {
-            $command1 = 'UID FETCH '.$uid_str.' ';
+            $command1 = 'UID FETCH '.$uid_str.' (FLAGS ';
         }
         else {
-            $command1 = 'UID FETCH 1:* ';
+            $command1 = 'UID FETCH 1:* (FLAGS ';
         }
         switch ($sort) {
             case 'DATE':
-                $command2 = "BODY.PEEK[HEADER.FIELDS (DATE)]\r\n";
+                $command2 = "BODY.PEEK[HEADER.FIELDS (DATE)])\r\n";
                 $key = "BODY[HEADER.FIELDS";
                 break;
             case 'SIZE':
-                $command2 = "RFC822.SIZE\r\n";
+                $command2 = "RFC822.SIZE)\r\n";
                 $key = "RFC822.SIZE";
                 break;
             case 'TO':
-                $command2 = "BODY.PEEK[HEADER.FIELDS (TO)]\r\n";
+                $command2 = "BODY.PEEK[HEADER.FIELDS (TO)])\r\n";
                 $key = "BODY[HEADER.FIELDS";
                 break;
             case 'CC':
-                $command2 = "BODY.PEEK[HEADER.FIELDS (CC)]\r\n";
+                $command2 = "BODY.PEEK[HEADER.FIELDS (CC)])\r\n";
                 $key = "BODY[HEADER.FIELDS";
                 break;
             case 'FROM':
-                $command2 = "BODY.PEEK[HEADER.FIELDS (FROM)]\r\n";
+                $command2 = "BODY.PEEK[HEADER.FIELDS (FROM)])\r\n";
                 $key = "BODY[HEADER.FIELDS";
                 break;
             case 'SUBJECT':
-                $command2 = "BODY.PEEK[HEADER.FIELDS (SUBJECT)]\r\n";
+                $command2 = "BODY.PEEK[HEADER.FIELDS (SUBJECT)])\r\n";
                 $key = "BODY[HEADER.FIELDS";
                 break;
             case 'ARRIVAL':
             default:
-                $command2 = "INTERNALDATE\r\n";
+                $command2 = "INTERNALDATE)\r\n";
                 $key = "INTERNALDATE";
                 break;
         }
@@ -2518,6 +2547,17 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                             $sort_key = $vals[$i + 1];
                         }
                         $body = false;
+                    }
+                }
+                if (strtoupper($v) == 'FLAGS') {
+                    $index = $i + 2;
+                    $flag_string = '';
+                    while (isset($vals[$index]) && $vals[$index] != ')') {
+                        $flag_string .= $vals[$index];
+                        $index++;
+                    }
+                    if ($filter && $filter != 'ALL' && !$this->flag_match($filter, $flag_string)) {
+                        continue 2;
                     }
                 }
                 if (strtoupper($v) == 'UID') {
@@ -2562,8 +2602,4 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
 }
-/* TODO:
- * - add filter support to client sorting in get_mailbox_page method
- * - expand IMAP keyword support where possible
- * - extensions ...*/
 ?>
