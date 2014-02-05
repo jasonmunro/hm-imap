@@ -1144,7 +1144,6 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
                 $res = !stristr($flags, str_replace('UN', '', $filter));
                 break;
         }
-        printf("filter: %s; flags: %s; result: %s\n", $filter, $flags, $res);
         return $res;
     }
 
