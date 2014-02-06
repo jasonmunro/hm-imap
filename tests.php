@@ -45,6 +45,9 @@ $connect = $imap->connect([
 assert_equal( true, $connect );
 assert_equal( 'authenticated', $imap->get_state() );
 
+$enable_results = $imap->enable();
+assert_equal( true, in_array( 'CONDSTORE', $enable_results ) );
+
 $caps = $imap->get_capability();
 assert_equal( true, strstr( $caps, 'CAPABILITY' ) );
 
@@ -54,6 +57,9 @@ assert_equal( true, isset($mailbox_list['INBOX']));
 $folder_detail = $imap->select_mailbox( 'INBOX' );
 assert_equal( 1, $folder_detail['selected'] );
 assert_equal( 'selected', $imap->get_state() );
+
+$poll_results = $imap->poll();
+assert_equal( true, empty( $poll_results ) );
 
 $unseen_uids = $imap->search('UNSEEN');
 assert_equal( true, is_array( $unseen_uids) );
