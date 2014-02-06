@@ -145,6 +145,12 @@ if ($imap->connect([
             /* get the uids of unread messages in the selected mailbox */
             $imap->search('UNSEEN');
 
+            /* poll the server for mailbox changes */
+            $imap->poll();
+
+            /* tell the server about extensions we support */
+            $imap->enable();
+
             /* get the headers and flags for the uid list */
             $imap->get_message_list( '1:10' );
 
