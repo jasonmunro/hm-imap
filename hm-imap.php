@@ -35,12 +35,19 @@ class Hm_IMAP_Base {
     protected $cache_data = array();     // cache data
     protected $cached_response = false;  // flag to indicate we are using a cached response
     protected $supported_extensions;     // IMAP extensions in the CAPABILITY response
+    protected $enabled_extensions;       // IMAP extensions validated by the ENABLE response
 
 
     /* attributes that can be set for the IMAP connaction */
     protected $config = array('server', 'starttls', 'port', 'tls', 'read_only',
         'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max',
         'use_cache', 'max_history');
+
+    /* supported extensions */
+    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE', 'ENABLE');
+
+    /* commands that should not be cached ever */
+    protected $nocache_commands = array('EXAMINE', 'SELECT', 'NOOP', 'LOGIN', 'ENABLE', 'AUTHENTICATE');
 
     /**
      * increment the imap command prefix such that it counts
@@ -643,7 +650,7 @@ class Hm_IMAP_Base {
                     $this->cache_data[$key] = array();
                 }
             }
-            if (!strstr($command, 'SELECT') && !strstr($command, 'EXAMINE') && !strstr($command, 'LOGIN')) {
+            if (str_replace($this->nocache_commands, array(''), $command) == $command) {
                 $this->cache_data[$key][$command] = $res;
             }
         }
@@ -665,7 +672,7 @@ class Hm_IMAP_Base {
         $command = trim(preg_replace("/^A\d+ /", '', $command));
         $res = false;
         $msg = '';
-        if (strstr($command, 'AUTHENTICATE') || strstr($command, 'SELECT') || strstr($command, 'LOGIN') || strstr($command, 'EXAMINE')) {
+        if (str_replace($this->nocache_commands, array(''), $command) != $command) {
             $res = false;
         }
         elseif (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'])) {
@@ -1087,7 +1094,7 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
     protected function get_adjacent_response_value($vals, $offset, $key) {
         foreach ($vals as $i => $v) {
             $i += $offset;
-            if (intval($v) && isset($vals[$i]) && $vals[$i] == $key) {
+            if (isset($vals[$i]) && $vals[$i] == $key) {
                 return $v;
             }
         }
@@ -1210,6 +1217,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $this->send_command($command);
             $response = $this->get_response();
             $this->capability = $response[0];
+            $this->debug['CAPS'] = $this->capability;
             $this->parse_extensions_from_capability();
             return $this->capability;
         }
@@ -1253,18 +1261,23 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             return false;
         }
         if (!$this->read_only) {
-            $command = "SELECT \"$box\"\r\n";
+            $command = "SELECT \"$box\"";
         }
         else {
-            $command = "EXAMINE \"$box\"\r\n";
+            $command = "EXAMINE \"$box\"";
         }
-        $this->send_command($command);
+        if ($this->is_supported('CONDSTORE')) {
+            $command .= ' (CONDSTORE)';
+        }
+        $this->send_command($command."\r\n");
         $res = $this->get_response(false, true);
         $status = $this->check_response($res, true);
         $uidvalidity = 0;
         $exists = 0;
         $unseen = 0;
         $uidnext = 0; 
+        $recent = 0;
+        $modseq = 0;
         $flags = array();
         $pflags = array();
         foreach ($res as $vals) {
@@ -1277,8 +1290,14 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             if (in_array('UIDVALIDITY', $vals)) {
                 $uidvalidity = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
             }
+            if (in_array('HIGHESTMODSEQ', $vals)) {
+                $modseq = $this->get_adjacent_response_value($vals, -1, 'HIGHESTMODSEQ');
+            }
             if (in_array('EXISTS', $vals)) {
                 $exists = $this->get_adjacent_response_value($vals, 1, 'EXISTS');
+            }
+            if (in_array('RECENT', $vals)) {
+                $recent = $this->get_adjacent_response_value($vals, 1, 'RECENT');
             }
             if (in_array('PERMANENTFLAGS', $vals)) {
                 $pflags = $this->get_flag_values($vals);
@@ -1294,7 +1313,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             'first_unseen' => $unseen,
             'uidnext' => $uidnext,
             'flags' => $flags,
-            'permanentflags' => $pflags
+            'permanentflags' => $pflags,
+            'recent' => $recent,
+            'modseq' => $modseq
         );
         if ($status) {
             $this->state = 'selected';
@@ -1353,11 +1374,95 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if ( $authed ) {
             $this->debug[] = 'Logged in successfully as '.$username;
             $this->get_capability();
+            $this->enable();
+            //$this->enable_compression();
         }
         else {
             $this->debug[] = 'Log in for '.$username.' FAILED';
         }
         return $authed;
+    }
+
+    /**
+     * use IMAP NOOP to poll for untagged server messages
+     *
+     * @return array list of properties that have changed since SELECT
+     */
+    public function poll() {
+        $attributes = array(
+            'uidnext' => false,
+            'unseen' => false,
+            'uidvalidity' => false,
+            'exists' => false,
+            'pflags' => false,
+            'recent' => false,
+            'modseq' => false,
+            'flags' => false
+        );
+
+        $command = "NOOP\r\n";
+        $this->send_command($command);
+        $res = $this->get_response(false, true);
+        if ($this->check_response($res, true)) {
+            foreach($res as $vals) {
+                if (in_array('modseq', $vals)) {
+                    $attributes['modseq'] = $this->get_adjacent_response_value($vals, -1, 'HIGHESTMODSEQ');
+                }
+                if (in_array('UIDNEXT', $vals)) {
+                    $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
+                }
+                if (in_array('UNSEEN', $vals)) {
+                    $attributes['unseen'] = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
+                }
+                if (in_array('UIDVALIDITY', $vals)) {
+                    $attributes['uidvalidity'] = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
+                }
+                if (in_array('EXISTS', $vals)) {
+                    $attributes['exists'] = $this->get_adjacent_response_value($vals, 1, 'EXISTS');
+                }
+                if (in_array('RECENT', $vals)) {
+                    $attributes['recent'] = $this->get_adjacent_response_value($vals, 1, 'RECENT');
+                }
+                if (in_array('PERMANENTFLAGS', $vals)) {
+                    $attributes['pflags'] = $this->get_flag_values($vals);
+                }
+                if (in_array('FLAGS', $vals)) {
+                    $attributes['flags'] = $this->get_flag_values($vals);
+                }
+            }
+            $state_changed = false;
+            $result = array();
+            foreach($attributes as $name => $value) {
+                if ($value !== false) {
+                    if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
+                        $state_changed = true;
+                        $this->selected_mailbox['detail'][$name] = $value;
+                        $result[ $name ] = $value;
+                    }
+                }
+            }
+            if ($state_changed) {
+                $this->bust_cache($this->selected_mailbox['name']);
+            }
+        }
+        return $result;
+    }
+    /**
+     * attempt enable IMAP COMPRESS extension
+     * TODO: currently does not work ...
+     *
+     * @return void
+     */
+    public function enable_compression() {
+        if ($this->is_supported('COMPRESS=DEFLATE')) {
+            $this->send_command("COMPRESS DEFLATE\r\n");
+            $res = $this->get_response(false, true);
+            if ($this->check_response($res, true)) {
+                stream_filter_prepend($this->handle, 'zlib.inflate', STREAM_FILTER_READ);
+                stream_filter_prepend($this->handle, 'zlib.deflate', STREAM_FILTER_WRITE);
+                $this->debug[] = 'DEFLATE compression extension activated';
+            }
+        }
     }
 
     /**
@@ -2640,6 +2745,29 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $uids = array_reverse($uids);
         }
         return $uids;
+    }
+
+    /**
+     * use the ENABLE extension to tell the IMAP server what extensions we support
+     *
+     * @return void
+     */
+    public function enable() {
+        $extensions = array();
+        if ($this->is_supported('ENABLE')) {
+            $command = 'ENABLE '.implode(' ', $this->client_extensions)."\r\n";
+            $this->send_command($command);
+            $res = $this->get_response(false, true);
+            if ($this->check_response($res, true)) {
+                foreach($res as $vals) {
+                    if (in_array('ENABLED', $vals)) {
+                        $extensions[] = $this->get_adjacent_response_value($vals, -1, 'ENABLED');
+                    }
+                }
+            }
+            $this->enabled_extensions = $extensions;
+        }
+        return $extensions;
     }
 
 }
