@@ -114,15 +114,18 @@ assert_equal( 'test', $fld );
 $fld = $imap->decode_fld( '=?UTF-8?B?amFzb24=?=' );
 assert_equal( 'jason', $fld );
 
-$sorted_uids = $imap->sort_by_fetch( 'ARRIVAL', true, 'UNSEEN' );
-assert_equal( true, is_array( $sorted_uids ) );
-assert_equal( true, !empty( $sorted_uids ) );
-assert_equal( 25, $sorted_uids[0] );
-
-$nspaces = $imap->get_namespaces();
-assert_equal( true, is_array( $nspaces ) );
-assert_equal( true, !empty( $nspaces ) );
-assert_equal( '/', $nspaces[0]['delim'] );
+if ( $imap->is_supported( 'SORT' ) ) {
+    $sorted_uids = $imap->sort_by_fetch( 'ARRIVAL', true, 'UNSEEN' );
+    assert_equal( true, is_array( $sorted_uids ) );
+    assert_equal( true, !empty( $sorted_uids ) );
+    assert_equal( 25, $sorted_uids[0] );
+}
+if ( $imap->is_supported( 'NAMESPACE' ) ) {
+    $nspaces = $imap->get_namespaces();
+    assert_equal( true, is_array( $nspaces ) );
+    assert_equal( true, !empty( $nspaces ) );
+    assert_equal( '/', $nspaces[0]['delim'] );
+}
 
 $created = $imap->create_mailbox( 'test123456789' );
 assert_equal( true, $created );
