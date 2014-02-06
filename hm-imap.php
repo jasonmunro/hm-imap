@@ -34,6 +34,7 @@ class Hm_IMAP_Base {
     protected $cache_keys = array();     // cache by folder keys
     protected $cache_data = array();     // cache data
     protected $cached_response = false;  // flag to indicate we are using a cached response
+    protected $supported_extensions;     // IMAP extensions in the CAPABILITY response
 
 
     /* attributes that can be set for the IMAP connaction */
@@ -1179,6 +1180,21 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
     /**
+     * build a list of IMAP extensions from the capability response
+     *
+     * @return void
+     */
+    private function parse_extensions_from_capability() {
+        $extensions = array();
+        foreach (explode(' ', $this->capability) as $word) {
+            if (!in_array(strtolower($word), array('ok', 'completed', 'imap4rev1', 'capability'))) {
+                $extensions[] = strtolower($word);
+            }
+        }
+        $this->supported_extensions = $extensions;
+    }
+
+    /**
      * fetch IMAP server capability response
      *
      * @return string capability response
@@ -1191,9 +1207,21 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $command = "CAPABILITY\r\n";
             $this->send_command($command);
             $response = $this->get_response();
-            $this->capability = implode(' ', $response);
+            $this->capability = $response[0];
+            $this->parse_extensions_from_capability();
             return $this->capability;
         }
+    }
+
+    /**
+     * check if an IMAP extension is supported by the server
+     *
+     * @param $extension string name of an extension
+     * 
+     * @return bool true if the extension is supported
+     */
+    public function is_supported( $extension ) {
+        return in_array(strtolower($extension), $this->supported_extensions);
     }
 
     /**
@@ -1752,7 +1780,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      * @return array list of IMAP message UIDs
      */
     public function get_message_sort_order($sort='ARRIVAL', $reverse=true, $filter='ALL') {
-        if (!$this->is_clean($sort, 'keyword') || !$this->is_clean($filter, 'keyword')) {
+        if (!$this->is_clean($sort, 'keyword') || !$this->is_clean($filter, 'keyword') || !$this->is_supported('SORT')) {
             return false;
         }
         $command = 'UID SORT ('.$sort.') US-ASCII '.$filter."\r\n";
@@ -2450,7 +2478,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         }
  
         /* use the SORT extension if we can */
-        if (strstr($this->capability, 'SORT')) {
+        if ($this->is_supported( 'SORT' )) {
             $uids = $this->get_message_sort_order($sort, $rev, $filter);
         }
 
