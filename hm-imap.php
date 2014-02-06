@@ -1165,6 +1165,8 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     public $use_cache = true;
     public $folder_max = 500;
     public $max_history = 1000;
+    public $default_delimiter = '/';
+    public $default_prefix = '';
 
     public $selected_mailbox = false;
 
@@ -1835,7 +1837,8 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $delim = false;
 
         /* loop through namespaces to issue the IMAP LIST/LSUB command against */
-        foreach ($this->get_namespaces() as $nsvals) {
+        $namespaces = $this->get_namespaces();
+        foreach ($namespaces as $nsvals) {
 
             /* build IMAP command */
             $namespace = $nsvals['prefix'];
@@ -2015,6 +2018,13 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      * @return array list of available namespace details
      */
     public function get_namespaces() {
+        if (!$this->is_supported('NAMESPACE')) {
+            return array(array(
+                'prefix' => $this->default_prefix,
+                'delim' => $this->default_delimiter,
+                'class' => 'personal'
+            ));
+        }
         $data = array();
         $this->send_command("NAMESPACE\r\n");
         $res = $this->get_response();
