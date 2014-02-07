@@ -1405,8 +1405,8 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $res = $this->get_response(false, true);
         if ($this->check_response($res, true)) {
             foreach($res as $vals) {
-                if (in_array('modseq', $vals)) {
-                    $attributes['modseq'] = $this->get_adjacent_response_value($vals, -1, 'HIGHESTMODSEQ');
+                if (in_array('MODSEQ', $vals)) {
+                    $attributes['modseq'] = $this->get_adjacent_response_value($vals, -2, 'MODSEQ');
                 }
                 if (in_array('UIDNEXT', $vals)) {
                     $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
@@ -1426,7 +1426,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 if (in_array('PERMANENTFLAGS', $vals)) {
                     $attributes['pflags'] = $this->get_flag_values($vals);
                 }
-                if (in_array('FLAGS', $vals)) {
+                if (in_array('FLAGS', $vals) && !in_array('MODSEQ', $vals)) {
                     $attributes['flags'] = $this->get_flag_values($vals);
                 }
             }
