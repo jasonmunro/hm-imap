@@ -44,10 +44,7 @@ class Hm_IMAP_Base {
         'use_cache', 'max_history');
 
     /* supported extensions */
-    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE', 'ENABLE');
-
-    /* commands that should not be cached ever */
-    protected $nocache_commands = array('EXAMINE', 'SELECT', 'NOOP', 'LOGIN', 'ENABLE', 'AUTHENTICATE');
+    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE', 'ENABLE', 'QRESYNC', 'MOVE');
 
     /**
      * increment the imap command prefix such that it counts
@@ -253,10 +250,6 @@ class Hm_IMAP_Base {
      * @return array of parsed or raw results
      */
     protected function get_response($max=false, $chunked=false, $line_length=8192, $sort=false) {
-        $cache = $this->check_cache($this->current_command);
-        if ($cache) {
-            return $cache;
-        }
         /* defaults and results containers */
         $result = array();
         $current_size = 0;
@@ -369,12 +362,7 @@ class Hm_IMAP_Base {
                 array_shift($this->responses);
             }
         }
-        if ($this->check_response($result, $chunked)) {
-            return $this->cache_return_val($result);
-        }
-        else {
-            return $result;
-        }
+        return $result;
     }
 
     /**
@@ -399,11 +387,6 @@ class Hm_IMAP_Base {
         /* single command */
         else {
             $command = 'A'.$this->command_number().' '.$command;
-        }
-        $cache = $this->check_cache($command, true);
-        if ($cache) {
-            $this->current_command = trim($command);
-            return;
         }
 
         /* send the command out to the server */
@@ -430,15 +413,12 @@ class Hm_IMAP_Base {
      *
      * @return bool true to indicate a success response from the IMAP server
      */
-    protected function check_response($data, $chunked=false, $stream=false) {
-        if ($this->cached_response || strstr($this->current_command, 'LOGOUT')) {
-            return true;
-        }
+    protected function check_response($data, $chunked=false, $log_failures=true) {
         $result = false;
 
         /* find the last bit of the parsed response and look for the OK atom */
         if ($chunked) {
-            if (!empty($data)) {
+            if (!empty($data) && isset($data[(count($data) - 1)])) {
                 $vals = $data[(count($data) - 1)];
                 if ($vals[0] == 'A'.$this->command_count) {
                     if (strtoupper($vals[1]) == 'OK') {
@@ -455,7 +435,7 @@ class Hm_IMAP_Base {
                 $result = true;
             }
         }
-        if (!$result && !$stream) {
+        if (!$result && $log_failures) {
             $this->debug[] = 'Command FAILED: '.$this->current_command;
         }
         return $result;
@@ -614,16 +594,19 @@ class Hm_IMAP_Base {
      * 
      * @return array initial low level parsed IMAP response argument
      */
-    private function cache_return_val($res) {
+    protected function cache_return_val($res, $command) {
         if (!$this->use_cache) {
             return $res;
         }
-        $command = trim(preg_replace("/^A\d+ /", '', $this->current_command));
+        $command = str_replace(array("\r", "\n"), array(''), preg_replace("/^A\d+ /", '', $command));
         if (strstr($command, 'LIST')) {
             $this->cache_data['LIST'] = $res;
         }
         elseif (strstr($command, 'LSUB')) {
             $this->cache_data['LSUB'] = $res;
+        }
+        elseif (strstr($command, 'NAMESPACE')) {
+            $this->cache_data['NAMESPACE'] = $res;
         }
         elseif ($this->selected_mailbox) {
             $key = sha1((string) $this->selected_mailbox['name'].$this->selected_mailbox['detail']['uidvalidity'].
@@ -650,9 +633,7 @@ class Hm_IMAP_Base {
                     $this->cache_data[$key] = array();
                 }
             }
-            if (str_replace($this->nocache_commands, array(''), $command) == $command) {
-                $this->cache_data[$key][$command] = $res;
-            }
+            $this->cache_data[$key][$command] = $res;
         }
         return $res;
     }
@@ -665,22 +646,23 @@ class Hm_IMAP_Base {
      *
      * @return mixed cached result or false if there is no cached data to use
      */
-    private function check_cache( $command, $check_only=false ) {
+    public function check_cache( $command, $check_only=false ) {
         if (!$this->use_cache) {
             return false;
         }
-        $command = trim(preg_replace("/^A\d+ /", '', $command));
+        $command = str_replace(array("\r", "\n"), array(''), preg_replace("/^A\d+ /", '', $command));
         $res = false;
         $msg = '';
-        if (str_replace($this->nocache_commands, array(''), $command) != $command) {
-            $res = false;
-        }
-        elseif (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'])) {
-            $msg = 'Cache hit with: '.$command;
+        if (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'])) {
+            $msg = 'Cache hit for: '.$command;
             $res = $this->cache_data['LIST'];
         }
+        elseif (preg_match("/^NAMESPACE/", $command) && isset($this->cache_data['NAMESPACE'])) {
+            $msg = 'Cache hit for: '.$command;
+            $res = $this->cache_data['NAMESPACE'];
+        }
         elseif (preg_match("/^LSUB /", $command) && isset($this->cache_data['LSUB'])) {
-            $msg = 'Cache hit with: '.$command;
+            $msg = 'Cache hit for: '.$command;
             $res = $this->cache_data['LSUB'];
         }
         elseif ($this->selected_mailbox) {
@@ -688,7 +670,7 @@ class Hm_IMAP_Base {
             if (isset($this->cache_keys[$box])) {
                 $key = $this->cache_keys[$box];
                 if (isset($this->cache_data[$key][$command])) {
-                    $msg = 'Cache hit for '.$box.' with: '.$command;
+                    $msg = 'Cache hit for: '.$box.' with: '.$command;
                     $res = $this->cache_data[$key][$command];
                 }
             }
@@ -1249,6 +1231,23 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
     /**
+     * build a QRESYNC IMAP extension paramater for a SELECT statement
+     *
+     * @return string param to use
+     */
+    private function build_qresync_params() {
+        $param = '';
+        if (isset($this->selected_mailbox['detail'])) {
+            $box = $this->selected_mailbox['detail'];
+            if (isset($box['uidvalidity']) && $box['uidvalidity'] && isset($box['modseq']) && $box['modseq']) {
+                /* TODO: validate $box values by type */
+                $param = sprintf(' (QRESYNC (%s %s))', $box['uidvalidity'], $box['modseq']);
+            }
+        }
+        return $param;
+    }
+
+    /**
      * select a mailbox
      *
      * @param $mailbox string the mailbox to attempt to select
@@ -1266,7 +1265,10 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         else {
             $command = "EXAMINE \"$box\"";
         }
-        if ($this->is_supported('CONDSTORE')) {
+        if ($this->is_supported('QRESYNC')) {
+            $command .= $this->build_qresync_params();
+        }
+        elseif ($this->is_supported('CONDSTORE')) {
             $command .= ' (CONDSTORE)';
         }
         $this->send_command($command."\r\n");
@@ -1278,9 +1280,13 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $uidnext = 0; 
         $recent = 0;
         $modseq = 0;
+        $nomodseq = false;
         $flags = array();
         $pflags = array();
         foreach ($res as $vals) {
+            if (in_array('NOMODSEQ', $vals)) {
+                $nomodseq = true;
+            }
             if (in_array('UIDNEXT', $vals)) {
                 $uidnext = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
             }
@@ -1305,6 +1311,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             if (in_array('FLAGS', $vals)) {
                 $flags = $this->get_flag_values($vals);
             }
+            if (in_array('FETCH', $vals)) {
+                /* UNTAGGED FETCH RESPONSE FROM QRESYNC/CONDSTORE */
+            }
         }
         $res = array(
             'selected' => $status,
@@ -1315,6 +1324,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             'flags' => $flags,
             'permanentflags' => $pflags,
             'recent' => $recent,
+            'nomodseq' => $nomodseq,
             'modseq' => $modseq
         );
         if ($status) {
@@ -1389,6 +1399,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      * @return array list of properties that have changed since SELECT
      */
     public function poll() {
+        $result = array();
         $attributes = array(
             'uidnext' => false,
             'unseen' => false,
@@ -1401,10 +1412,15 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         );
 
         $command = "NOOP\r\n";
+        $nomodseq = false;
         $this->send_command($command);
         $res = $this->get_response(false, true);
         if ($this->check_response($res, true)) {
+            /* TODO: combine this with SELECT parsing. add FETCH response handling */
             foreach($res as $vals) {
+                if (in_array('NOMODSEQ', $vals)) {
+                    $nomodseq = true;
+                }
                 if (in_array('MODSEQ', $vals)) {
                     $attributes['modseq'] = $this->get_adjacent_response_value($vals, -2, 'MODSEQ');
                 }
@@ -1431,7 +1447,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 }
             }
             $state_changed = false;
-            $result = array();
             foreach($attributes as $name => $value) {
                 if ($value !== false) {
                     if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
@@ -1441,7 +1456,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                     }
                 }
             }
-            if ($state_changed) {
+            if ($state_changed || $nomodseq) {
                 $this->bust_cache($this->selected_mailbox['name']);
             }
         }
@@ -1458,8 +1473,8 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $this->send_command("COMPRESS DEFLATE\r\n");
             $res = $this->get_response(false, true);
             if ($this->check_response($res, true)) {
-                stream_filter_prepend($this->handle, 'zlib.inflate', STREAM_FILTER_READ);
-                stream_filter_prepend($this->handle, 'zlib.deflate', STREAM_FILTER_WRITE);
+                //stream_filter_prepend($this->handle, 'zlib.inflate', STREAM_FILTER_READ);
+                //stream_filter_append($this->handle, 'zlib.deflate', STREAM_FILTER_WRITE, 6);
                 $this->debug[] = 'DEFLATE compression extension activated';
             }
         }
@@ -1539,6 +1554,11 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         }
         $command = 'UID FETCH '.$sorted_string.' (FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM '.
                    "DATE CONTENT-TYPE X-PRIORITY TO)])\r\n";
+        $cache_command = $command.(string)$raw;
+        $cache = $this->check_cache($cache_command);
+        if ($cache) {
+            return $cache;
+        }
         $this->send_command($command);
         $res = $this->get_response(false, true);
         $status = $this->check_response($res, true);
@@ -1616,7 +1636,12 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 }
             }
         }
-        return $headers;
+        if ($status) {
+            return $this->cache_return_val($headers, $cache_command);
+        }
+        else {
+            return $headers;
+        }
     }
 
     /**
@@ -1634,6 +1659,10 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $part_num = 1;
         $struct = array();
         $command = "UID FETCH $uid BODYSTRUCTURE\r\n";
+        $cache = $this->check_cache($command);
+        if ($cache) {
+            return $cache;
+        }
         $this->send_command($command);
         $result = $this->get_response(false, true);
         while (isset($result[0][0]) && isset($result[0][1]) && $result[0][0] == '*' && strtoupper($result[0][1]) == 'OK') {
@@ -1659,6 +1688,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 $struct[1] = $this->parse_single_part($response);
             }
         } 
+        if ($status) {
+            return $this->cache_return_val($struct, $command);
+        }
         return $struct;
     }
 
@@ -1686,6 +1718,14 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 return '';
             }
             $command = "UID FETCH $uid BODY[$message_part]\r\n";
+        }
+        $cache_command = $command.(string)$max;
+        if ($struct) {
+            $cache_command .= '1';
+        }
+        $cache = $this->check_cache($cache_command);
+        if ($cache) {
+            return $cache;
         }
         $this->send_command($command);
         $result = $this->get_response($max, true);
@@ -1730,6 +1770,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 $res = mb_convert_encoding($res, 'UTF-8', $struct['charset']);
             }
         }
+        if ($status) {
+            return $this->cache_return_val($res, $cache_command);
+        }
         return $res;
     }
 
@@ -1772,6 +1815,10 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $fld = '';
         }
         $command = 'UID SEARCH ('.$target.')'.$charset.$uids.$fld."\r\n";
+        $cache = $this->check_cache($command);
+        if ($cache) {
+            return $cache;
+        }
         $this->send_command($command);
         $result = $this->get_response(false, true);
         $status = $this->check_response($result, true);
@@ -1785,6 +1832,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                     }
                 }
             }
+            return $this->cache_return_val($res, $command);
         }
         return $res;
     }
@@ -1809,6 +1857,11 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 return array();
             }
             $command = "UID FETCH $uid (FLAGS BODY[$message_part.HEADER])\r\n";
+        }
+        $cache_command = $command.(string)$raw;
+        $cache = $this->check_cache($cache_command);
+        if ($cache) {
+            return $cache;
         }
         $this->send_command($command);
         $result = $this->get_response(false, true);
@@ -1874,6 +1927,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             }
             $results[$vals[0]] = $vals[1];
         }
+        if ($status) {
+            return $this->cache_return_val($results, $cache_command);
+        }
         return $results;
     }
 
@@ -1891,6 +1947,11 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             return false;
         }
         $command = 'UID SORT ('.$sort.') US-ASCII '.$filter."\r\n";
+        $cache_command = $command.(string)$reverse;
+        $cache = $this->check_cache($cache_command);
+        if ($cache) {
+            return $cache;
+        }
         $this->send_command($command);
         if ($this->sort_speedup) {
             $speedup = true;
@@ -1916,32 +1977,27 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if ($reverse) {
             $uids = array_reverse($uids);
         }
+        if ($status) {
+            return $this->cache_return_val($uids, $cache_command);
+        }
         return $uids;
     }
 
     /**
-     * get a list of mailbox folders
+     * helper function to build IMAP LIST commands
      *
-     * @param $lsub bool flag to limit results to subscribed folders only
+     * @param $lsub bool flag to use LSUB
      *
-     * @return array associative array of folder details
+     * @return array IMAP LIST/LSUB commands
      */
-    public function get_mailbox_list($lsub=false) {
-        /* possibly limit list response to subscribed folders only */
+    private function build_list_commands($lsub) {
+        $commands = array();
         if ($lsub) {
             $imap_command = 'LSUB';
         }
         else {
             $imap_command = 'LIST';
         }
-
-        /* defaults */
-        $folders = array();
-        $excluded = array();
-        $parents = array();
-        $delim = false;
-
-        /* loop through namespaces to issue the IMAP LIST/LSUB command against */
         $namespaces = $this->get_namespaces();
         foreach ($namespaces as $nsvals) {
 
@@ -1954,7 +2010,37 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             }
 
             /* send command to the IMAP server and fetch the response */
-            $command = $imap_command.' "'.$namespace."\" \"*\"\r\n";
+            $commands[] = array($imap_command.' "'.$namespace."\" \"*\"\r\n", $namespace);
+        }
+        return $commands;
+    }
+
+    /**
+     * get a list of mailbox folders
+     *
+     * @param $lsub bool flag to limit results to subscribed folders only
+     *
+     * @return array associative array of folder details
+     */
+    public function get_mailbox_list($lsub=false) {
+        /* possibly limit list response to subscribed folders only */
+
+        /* defaults */
+        $folders = array();
+        $excluded = array();
+        $parents = array();
+        $delim = false;
+        $commands = $this->build_list_commands($lsub);
+        $cache_command = implode('', array_map(function($v) { return $v[0]; }, $commands));
+        $cache = $this->check_cache($cache_command);
+        if ($cache) {
+            return $cache;
+        }
+
+        foreach($commands as $vals) {
+            $command = $vals[0];
+            $namespace = $vals[1];
+
             $this->send_command($command);
             $result = $this->get_response($this->folder_max, true);
 
@@ -2114,7 +2200,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
 
         /* sort and return the list */
         ksort($folders);
-        return $folders;
+        return $this->cache_return_val($folders, $cache_command);
     }
 
     /**
@@ -2131,10 +2217,16 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             ));
         }
         $data = array();
+        $command = "NAMESPACE\r\n";
+        $cache = $this->check_cache($command);
+        if ($cache) {
+            return $cache;
+        }
         $this->send_command("NAMESPACE\r\n");
         $res = $this->get_response();
         $this->namespace_count = 0;
-        if ($this->check_response($res)) {
+        $status = $this->check_response($res);
+        if ($status) {
             if (preg_match("/\* namespace (\(.+\)|NIL) (\(.+\)|NIL) (\(.+\)|NIL)/i", $res[0], $matches)) {
                 $classes = array(1 => 'personal', 2 => 'other_users', 3 => 'shared');
                 foreach ($classes as $i => $v) {
@@ -2159,6 +2251,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                     }
                 }
             }
+            return $this->cache_return_val($data, $command);
         }
         return $data;
     }
@@ -2211,7 +2304,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             while(substr($res, -2) != "\r\n") {
                 $res .= $this->fgets($size);
             }
-            if ($this->check_response(array($res), false, true)) {
+            if ($res && $this->check_response(array($res), false, false)) {
                 $res = false;
             }
             if ($res) {
@@ -2322,7 +2415,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      * @param $mailbox string destination IMAP mailbox name for operations the require one
      */
     public function message_action($action, $uids, $mailbox=false) {
-        $keepers = array();
+        $status = false;
         $uid_strings = array();
         if (is_array($uids)) {
             if (count($uids) > 1000) {
@@ -2377,10 +2470,20 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                     }
                     $command = "UID COPY $uid_string \"".$this->utf7_encode($mailbox)."\"\r\n";
                     break;
+                case 'MOVE':
+                    if ($this->is_supported('MOVE')) {
+                        if (!$this->is_clean($mailbox, 'mailbox')) {
+                            return false;
+                        }
+                        $command = "UID MOVE $uid_string \"".$this->utf7_encode($mailbox)."\"\r\n";
+                    }
+                    break;
             }
-            $this->send_command($command);
-            $res = $this->get_response();
-            $status = $this->check_response($res);
+            if ($command) {
+                $this->send_command($command);
+                $res = $this->get_response();
+                $status = $this->check_response($res);
+            }
             if ($status) {
                 $this->bust_cache( $this->selected_mailbox['name'] );
                 if ($mailbox) {
@@ -2480,16 +2583,19 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             case 'LIST':
                 if (isset($this->cache_data['LIST'])) {
                     unset($this->cache_data['LIST']);
+                    $this->debug[] = 'cache busted: '.$type;
                 }
                 break;
             case 'LSUB':
                 if (isset($this->cache_data['LSUB'])) {
                     unset($this->cache_data['LSUB']);
+                    $this->debug[] = 'cache busted: '.$type;
                 }
                 break;
             case 'ALL':
                 $this->cache_keys = array();
                 $this->cache_data = array();
+                $this->debug[] = 'cache busted: '.$type;
                 break;
             default:
                 if (isset($this->cache_keys[$type])) {
@@ -2497,6 +2603,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                         unset($this->cache_data[$this->cache_keys[$type]]);
                     }
                     unset($this->cache_keys[$type]);
+                    $this->debug[] = 'cache busted: '.$type;
                 }
                 break;
         }
@@ -2671,6 +2778,11 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 break;
         }
         $command = $command1.$command2;
+        $cache_command = $command.(string)$reverse;
+        $cache = $this->check_cache($cache_command);
+        if ($cache) {
+            return $cache;
+        }
         $this->send_command($command);
         $res = $this->get_response(false, true);
         $status = $this->check_response($res, true);
@@ -2744,6 +2856,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if ($reverse) {
             $uids = array_reverse($uids);
         }
+        if ($status) {
+            return $this->cache_return_val($uids, $cache_command);
+        }
         return $uids;
     }
 
@@ -2755,7 +2870,13 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     public function enable() {
         $extensions = array();
         if ($this->is_supported('ENABLE')) {
-            $command = 'ENABLE '.implode(' ', $this->client_extensions)."\r\n";
+            if ($this->is_supported('QRESYNC')) {
+                $extension_string = implode(' ', array_filter($this->client_extensions, function($val) { return $val != 'CONDSTORE'; }));
+            }
+            else {
+                $extension_string = implode(' ', $this->client_extensions);
+            }
+            $command = 'ENABLE '.$extension_string."\r\n";
             $this->send_command($command);
             $res = $this->get_response(false, true);
             if ($this->check_response($res, true)) {
