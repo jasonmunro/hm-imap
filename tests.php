@@ -46,7 +46,7 @@ assert_equal( true, $connect );
 assert_equal( 'authenticated', $imap->get_state() );
 
 $enable_results = $imap->enable();
-assert_equal( true, in_array( 'CONDSTORE', $enable_results ) );
+assert_equal( true, in_array( 'QRESYNC', $enable_results ) );
 
 $caps = $imap->get_capability();
 assert_equal( true, strstr( $caps, 'CAPABILITY' ) );
@@ -74,11 +74,6 @@ assert_equal( true, ctype_digit( $search_res[0] ) );
 $msg_list = $imap->get_message_list( array( 3 ) );
 assert_equal( true, isset( $msg_list[3] ) );
 assert_equal( 1, count( $msg_list ) );
-
-$sorted_uids = $imap->get_message_sort_order( 'ARRIVAL' );
-assert_equal( true, is_array( $sorted_uids ) );
-assert_equal( true, !empty( $sorted_uids ) );
-assert_equal( true, ctype_digit( $sorted_uids[0] ) );
 
 $struct = $imap->get_message_structure( 3 );
 assert_equal( true, is_array( $struct ) );
@@ -120,12 +115,18 @@ assert_equal( 'test', $fld );
 $fld = $imap->decode_fld( '=?UTF-8?B?amFzb24=?=' );
 assert_equal( 'jason', $fld );
 
+$sorted_uids = $imap->sort_by_fetch( 'ARRIVAL', true, 'UNSEEN' );
+assert_equal( true, is_array( $sorted_uids ) );
+assert_equal( true, !empty( $sorted_uids ) );
+assert_equal( 18, $sorted_uids[0] );
+
 if ( $imap->is_supported( 'SORT' ) ) {
-    $sorted_uids = $imap->sort_by_fetch( 'ARRIVAL', true, 'UNSEEN' );
+    $sorted_uids = $imap->get_message_sort_order( 'ARRIVAL' );
     assert_equal( true, is_array( $sorted_uids ) );
     assert_equal( true, !empty( $sorted_uids ) );
-    assert_equal( 25, $sorted_uids[0] );
+    assert_equal( true, ctype_digit( $sorted_uids[0] ) );
 }
+
 if ( $imap->is_supported( 'NAMESPACE' ) ) {
     $nspaces = $imap->get_namespaces();
     assert_equal( true, is_array( $nspaces ) );
@@ -159,10 +160,8 @@ $imap->bust_cache( 'ALL' );
 $imap->load_cache( $cache );
 assert_equal( true, strlen($cache) > 0 );
 
-
 $imap->show_debug( false );
 printf( "\nTests passed: %d\n\n", $passed );
-
 
 /* helper function for test result checking */
 function assert_equal( $expected, $actual ) {
