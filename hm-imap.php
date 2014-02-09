@@ -2689,6 +2689,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if (isset($data[0]) && isset($data[1])) {
             $this->cache_keys = $data[0];
             $this->cache_data = $data[1];
+            $this->debug[] = 'Cache loaded: '.count($this->cache_data);
         }
     }
 
