@@ -635,6 +635,7 @@ class Hm_IMAP_Base {
             }
             $this->cache_data[$key][$command] = $res;
         }
+        /* TODO: prune cache */
         return $res;
     }
 
