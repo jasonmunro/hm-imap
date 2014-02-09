@@ -600,10 +600,10 @@ class Hm_IMAP_Base {
         }
         $command = str_replace(array("\r", "\n"), array(''), preg_replace("/^A\d+ /", '', $command));
         if (strstr($command, 'LIST')) {
-            $this->cache_data['LIST'] = $res;
+            $this->cache_data['LIST'][$command] = $res;
         }
         elseif (strstr($command, 'LSUB')) {
-            $this->cache_data['LSUB'] = $res;
+            $this->cache_data['LSUB'][$command] = $res;
         }
         elseif (strstr($command, 'NAMESPACE')) {
             $this->cache_data['NAMESPACE'] = $res;
@@ -653,17 +653,17 @@ class Hm_IMAP_Base {
         $command = str_replace(array("\r", "\n"), array(''), preg_replace("/^A\d+ /", '', $command));
         $res = false;
         $msg = '';
-        if (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'])) {
+        if (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'][$command])) {
             $msg = 'Cache hit for: '.$command;
-            $res = $this->cache_data['LIST'];
+            $res = $this->cache_data['LIST'][$command];
+        }
+        elseif (preg_match("/^LSUB /", $command) && isset($this->cache_data['LSUB'[$command]])) {
+            $msg = 'Cache hit for: '.$command;
+            $res = $this->cache_data['LSUB'][$command];
         }
         elseif (preg_match("/^NAMESPACE/", $command) && isset($this->cache_data['NAMESPACE'])) {
             $msg = 'Cache hit for: '.$command;
             $res = $this->cache_data['NAMESPACE'];
-        }
-        elseif (preg_match("/^LSUB /", $command) && isset($this->cache_data['LSUB'])) {
-            $msg = 'Cache hit for: '.$command;
-            $res = $this->cache_data['LSUB'];
         }
         elseif ($this->selected_mailbox) {
             $box = $this->selected_mailbox['name'];
@@ -1367,7 +1367,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array IMAP LIST/LSUB commands
      */
-    private function build_list_commands($lsub) {
+    private function build_list_commands($lsub, $mailbox, $keyword) {
         $commands = array();
         if ($lsub) {
             $imap_command = 'LSUB';
@@ -1387,7 +1387,10 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             }
 
             /* send command to the IMAP server and fetch the response */
-            $commands[] = array($imap_command.' "'.$namespace."\" \"*\"\r\n", $namespace);
+            if ($mailbox) {
+                $namespace .= $delim.$mailbox;
+            }
+            $commands[] = array($imap_command.' "'.$namespace."\" \"$keyword\"\r\n", $namespace);
         }
         return $commands;
     }
@@ -2100,7 +2103,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array associative array of folder details
      */
-    public function get_mailbox_list($lsub=false) {
+    public function get_mailbox_list($lsub=false, $mailbox='', $keyword='*') {
         /* possibly limit list response to subscribed folders only */
 
         /* defaults */
@@ -2108,8 +2111,8 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $excluded = array();
         $parents = array();
         $delim = false;
-        $commands = $this->build_list_commands($lsub);
-        $cache_command = implode('', array_map(function($v) { return $v[0]; }, $commands));
+        $commands = $this->build_list_commands($lsub, $mailbox, $keyword);
+        $cache_command = implode('', array_map(function($v) { return $v[0]; }, $commands)).(string)$mailbox.(string)$keyword;
         $cache = $this->check_cache($cache_command);
         if ($cache) {
             return $cache;
