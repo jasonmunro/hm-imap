@@ -45,7 +45,7 @@ class Hm_IMAP_Base {
         'use_cache', 'max_history');
 
     /* supported extensions */
-    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE', 'ENABLE', 'QRESYNC', 'MOVE');
+    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE', 'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE');
 
     /**
      * increment the imap command prefix such that it counts
@@ -1471,6 +1471,15 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     public $default_prefix = '';
 
     public $selected_mailbox = false;
+    public $special_use_mailboxes = array(
+        '\All' => false,
+        '\Archive' => false,
+        '\Drafts' => false,
+        '\Flagged' => false,
+        '\Junk' => false,
+        '\Sent' => false,
+        '\Trash' => false
+    );
 
     /* internal use */
     private $state = 'disconnected';
@@ -1834,6 +1843,19 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                     $parent = implode($delim, array_slice($folder_parts, 0, -1));
                     if ($parent.$delim == $namespace) {
                         $parent = '';
+                    }
+                }
+
+                /* special use mailbox extension */
+                if ($this->is_supported('SPECIAL-USE')) {
+                    $special = false;
+                    foreach ($this->special_use_mailboxes as $name => $value) {
+                        if (stristr($flags, $name)) {
+                            $special = $name;
+                        }
+                    }
+                    if ($special) {
+                        $this->special_use_mailboxes[$special] = $folder;
                     }
                 }
 
