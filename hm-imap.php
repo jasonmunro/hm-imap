@@ -1339,7 +1339,7 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
             $msg = 'Cache hit for: '.$command;
             $res = $this->cache_data['LIST'][$command];
         }
-        elseif (preg_match("/^LSUB /", $command) && isset($this->cache_data['LSUB'[$command]])) {
+        elseif (preg_match("/^LSUB /", $command) && isset($this->cache_data['LSUB'][$command])) {
             $msg = 'Cache hit for: '.$command;
             $res = $this->cache_data['LSUB'][$command];
         }
