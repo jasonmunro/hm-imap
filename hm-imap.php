@@ -45,7 +45,8 @@ class Hm_IMAP_Base {
         'use_cache', 'max_history');
 
     /* supported extensions */
-    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE', 'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS');
+    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE',
+        'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT' );
 
     /**
      * increment the imap command prefix such that it counts
@@ -1820,15 +1821,13 @@ class Hm_IMAP extends Hm_IMAP_Cache {
 
             $this->send_command($command);
             $result = $this->get_response($this->folder_max, true);
-            print_r($result);
 
             /* loop through the "parsed" response. Each iteration is one folder */
             foreach ($result as $vals) {
 
                 if (in_array('STATUS', $vals)) {
-                    print_r($vals);
                     $status_values = $this->parse_status_response(array($vals));
-                    /* TODO: update cache here */
+                    $this->check_mailbox_state_change($attributes);
                     continue;
                 }
                 /* break at the end of the list */
@@ -3095,20 +3094,28 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $response = $this->get_response(false, true);
         if ($this->check_response($response, true)) {
             $attributes = $this->parse_status_response($response);
-            /* TODO: update cache here */
+            $this->check_mailbox_state_change($attributes);
         }
         return $attributes;
     }
 
-
+    /**
+     * unselect the selected mailbox
+     *
+     * @return bool true on success
+     */
+    public function unselect_mailbox() {
+        $this->send_command("UNSELECT\r\n");
+        $res = $this->get_response(false, true);
+        return $this->check_response($res, true);
+    }
 }
 
 /*
  * TODO:
- * absstract cache bust based on STATUS/SELECT/LIST-STATUS responses, add to STATUS and LIST-STATUS
- * UNSELECT extension support
  * CREATE-SPECIAL-USE support
- * LOGINDISABLED / STARTTLS support
+ * fix LOGINDISABLED wrt STARTTLS support
  * APPEND and MULTI-APPEND support
+ * add extension blacklist support to is_supported
  */
 ?>
