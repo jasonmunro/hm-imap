@@ -1276,7 +1276,10 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $status = $this->check_response($res, true);
         $result = array();
         if ($status) {
-            $attributes = $this->parse_untagged_responses($res);
+            list($qresync, $attributes) = $this->parse_untagged_responses($res);
+            if (!$qresync) {
+                /* TODO: check/bust cache */
+            }
             $result = array(
                 'selected' => $status,
                 'uidvalidity' => $attributes['uidvalidity'],
@@ -1362,6 +1365,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      * @return array list of properties
      */
     private function parse_untagged_responses($data) {
+        $cache_updates = 0;
+        $cache_updated = 0;
+        $qresync = false;
         $attributes = array(
             'uidnext' => false,
             'unseen' => false,
@@ -1402,11 +1408,14 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 $attributes['flags'] = $this->get_flag_values($vals);
             }
             if (in_array('FETCH', $vals) || in_array('VANISHED', $vals)) {
-                /* TODO: track updates and cancel cache bust on mailbox */
-                $this->update_cache_data($vals);
+                $cache_updates++;
+                $cache_updated += $this->update_cache_data($vals);
             }
         }
-        return $attributes;
+        if ($cache_updates && $cache_updates == $cache_updated) {
+            $qresync = true;
+        }
+        return array($qresync, $attributes);
     }
 
     /**
@@ -1414,9 +1423,10 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @param $data array low level parsed IMAP response segment
      *
-     * @return void
+     * @return int 1 if the cache was updated
      */
     private function update_cache_data($data) {
+        $res = 0;
         if (in_array('VANISHED', $data)) {
             $uid = $this->get_adjacent_response_value($data, -1, 'VANISHED');
             if ($this->is_clean($uid, 'uid')) {
@@ -1428,6 +1438,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                                 if (isset($result[$uid])) {
                                     unset($this->cache_data[$key][$command][$uid]);
                                     $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
+                                    $res = 1;
                                 }
                             }
                             elseif (strstr($command, 'UID SORT')) {
@@ -1435,6 +1446,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                                 if ($index !== false) {
                                     unset($this->cache_data[$key][$command][$index]);
                                     $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
+                                    $res = 1;
                                 }
                             }
                         }
@@ -1460,6 +1472,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                                 if (isset($result[$uid]['flags'])) {
                                     $this->cache_data[$key][$command][$uid]['flags'] = implode(' ', $flags);
                                     $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
+                                    $res = 1;
                                 }
                             }
                         }
@@ -1467,6 +1480,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 }
             }
         }
+        return $res;
     }
 
     /**
@@ -1480,19 +1494,24 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $this->send_command($command);
         $res = $this->get_response(false, true);
         if ($this->check_response($res, true)) {
-            $attributes = $this->parse_untagged_responses($res);
-            $state_changed = false;
-            foreach($attributes as $name => $value) {
-                if ($value !== false) {
-                    if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
-                        $state_changed = true;
-                        $this->selected_mailbox['detail'][$name] = $value;
-                        $result[ $name ] = $value;
+            list($qresync, $attributes) = $this->parse_untagged_responses($res);
+            if (!$qresync) {
+                $state_changed = false;
+                foreach($attributes as $name => $value) {
+                    if ($value !== false) {
+                        if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
+                            $state_changed = true;
+                            $this->selected_mailbox['detail'][$name] = $value;
+                            $result[ $name ] = $value;
+                        }
                     }
                 }
+                if ($state_changed || $attributes['nomodseq']) {
+                    $this->bust_cache($this->selected_mailbox['name']);
+                }
             }
-            if ($state_changed || $attributes['nomodseq']) {
-                $this->bust_cache($this->selected_mailbox['name']);
+            else {
+                $this->debug[] = sprintf('Cache bust avoided on %s with QRESYNC!', $this->selected_mailbox['name']);
             }
         }
         return $result;
