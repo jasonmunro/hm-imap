@@ -1274,64 +1274,25 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         $this->send_command($command."\r\n");
         $res = $this->get_response(false, true);
         $status = $this->check_response($res, true);
-        $uidvalidity = 0;
-        $exists = 0;
-        $unseen = 0;
-        $uidnext = 0; 
-        $recent = 0;
-        $modseq = 0;
-        $nomodseq = false;
-        $flags = array();
-        $pflags = array();
-        foreach ($res as $vals) {
-            if (in_array('NOMODSEQ', $vals)) {
-                $nomodseq = true;
-            }
-            if (in_array('UIDNEXT', $vals)) {
-                $uidnext = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
-            }
-            if (in_array('UNSEEN', $vals)) {
-                $unseen = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
-            }
-            if (in_array('UIDVALIDITY', $vals)) {
-                $uidvalidity = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
-            }
-            if (in_array('HIGHESTMODSEQ', $vals)) {
-                $modseq = $this->get_adjacent_response_value($vals, -1, 'HIGHESTMODSEQ');
-            }
-            if (in_array('EXISTS', $vals)) {
-                $exists = $this->get_adjacent_response_value($vals, 1, 'EXISTS');
-            }
-            if (in_array('RECENT', $vals)) {
-                $recent = $this->get_adjacent_response_value($vals, 1, 'RECENT');
-            }
-            if (in_array('PERMANENTFLAGS', $vals)) {
-                $pflags = $this->get_flag_values($vals);
-            }
-            if (in_array('FLAGS', $vals)) {
-                $flags = $this->get_flag_values($vals);
-            }
-            if (in_array('FETCH', $vals)) {
-                /* UNTAGGED FETCH RESPONSE FROM QRESYNC/CONDSTORE */
-            }
-        }
-        $res = array(
-            'selected' => $status,
-            'uidvalidity' => $uidvalidity,
-            'exists' => $exists,
-            'first_unseen' => $unseen,
-            'uidnext' => $uidnext,
-            'flags' => $flags,
-            'permanentflags' => $pflags,
-            'recent' => $recent,
-            'nomodseq' => $nomodseq,
-            'modseq' => $modseq
-        );
+        $result = array();
         if ($status) {
+            $attributes = $this->parse_untagged_responses($res);
+            $result = array(
+                'selected' => $status,
+                'uidvalidity' => $attributes['uidvalidity'],
+                'exists' => $attributes['exists'],
+                'first_unseen' => $attributes['unseen'],
+                'uidnext' => $attributes['uidnext'],
+                'flags' => $attributes['flags'],
+                'permanentflags' => $attributes['pflags'],
+                'recent' => $attributes['recent'],
+                'nomodseq' => $attributes['nomodseq'],
+                'modseq' => $attributes['modse'],
+            );
             $this->state = 'selected';
-            $this->selected_mailbox = array('name' => $box, 'detail' => $res);
+            $this->selected_mailbox = array('name' => $box, 'detail' => $result);
         }
-        return $res;
+        return $result;
     }
 
     /**
@@ -1394,12 +1355,13 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
     /**
-     * use IMAP NOOP to poll for untagged server messages
+     * collect useful untagged responses about mailbox state from certain command responses
      *
-     * @return array list of properties that have changed since SELECT
+     * @param $data array low level parsed IMAP response segment
+     *
+     * @return array list of properties
      */
-    public function poll() {
-        $result = array();
+    private function parse_untagged_responses($data) {
         $attributes = array(
             'uidnext' => false,
             'unseen' => false,
@@ -1408,44 +1370,53 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             'pflags' => false,
             'recent' => false,
             'modseq' => false,
-            'flags' => false
+            'flags' => false,
+            'nomodseq' => false
         );
+        foreach($data as $vals) {
+            if (in_array('NOMODSEQ', $vals)) {
+                $attributes['nomodseq'] = true;
+            }
+            if (in_array('MODSEQ', $vals)) {
+                $attributes['modseq'] = $this->get_adjacent_response_value($vals, -2, 'MODSEQ');
+            }
+            if (in_array('UIDNEXT', $vals)) {
+                $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
+            }
+            if (in_array('UNSEEN', $vals)) {
+                $attributes['unseen'] = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
+            }
+            if (in_array('UIDVALIDITY', $vals)) {
+                $attributes['uidvalidity'] = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
+            }
+            if (in_array('EXISTS', $vals)) {
+                $attributes['exists'] = $this->get_adjacent_response_value($vals, 1, 'EXISTS');
+            }
+            if (in_array('RECENT', $vals)) {
+                $attributes['recent'] = $this->get_adjacent_response_value($vals, 1, 'RECENT');
+            }
+            if (in_array('PERMANENTFLAGS', $vals)) {
+                $attributes['pflags'] = $this->get_flag_values($vals);
+            }
+            if (in_array('FLAGS', $vals) && !in_array('MODSEQ', $vals)) {
+                $attributes['flags'] = $this->get_flag_values($vals);
+            }
+        }
+        return $attributes;
+    }
 
+    /**
+     * use IMAP NOOP to poll for untagged server messages
+     *
+     * @return array list of properties that have changed since SELECT
+     */
+    public function poll() {
+        $result = array();
         $command = "NOOP\r\n";
-        $nomodseq = false;
         $this->send_command($command);
         $res = $this->get_response(false, true);
         if ($this->check_response($res, true)) {
-            /* TODO: combine this with SELECT parsing. add FETCH response handling */
-            foreach($res as $vals) {
-                if (in_array('NOMODSEQ', $vals)) {
-                    $nomodseq = true;
-                }
-                if (in_array('MODSEQ', $vals)) {
-                    $attributes['modseq'] = $this->get_adjacent_response_value($vals, -2, 'MODSEQ');
-                }
-                if (in_array('UIDNEXT', $vals)) {
-                    $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
-                }
-                if (in_array('UNSEEN', $vals)) {
-                    $attributes['unseen'] = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
-                }
-                if (in_array('UIDVALIDITY', $vals)) {
-                    $attributes['uidvalidity'] = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
-                }
-                if (in_array('EXISTS', $vals)) {
-                    $attributes['exists'] = $this->get_adjacent_response_value($vals, 1, 'EXISTS');
-                }
-                if (in_array('RECENT', $vals)) {
-                    $attributes['recent'] = $this->get_adjacent_response_value($vals, 1, 'RECENT');
-                }
-                if (in_array('PERMANENTFLAGS', $vals)) {
-                    $attributes['pflags'] = $this->get_flag_values($vals);
-                }
-                if (in_array('FLAGS', $vals) && !in_array('MODSEQ', $vals)) {
-                    $attributes['flags'] = $this->get_flag_values($vals);
-                }
-            }
+            $attributes = $this->parse_untagged_responses($res);
             $state_changed = false;
             foreach($attributes as $name => $value) {
                 if ($value !== false) {
@@ -1456,7 +1427,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                     }
                 }
             }
-            if ($state_changed || $nomodseq) {
+            if ($state_changed || $attributes['nomodseq']) {
                 $this->bust_cache($this->selected_mailbox['name']);
             }
         }
