@@ -45,7 +45,7 @@ class Hm_IMAP_Base {
         'use_cache', 'max_history');
 
     /* supported extensions */
-    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE', 'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE');
+    protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE', 'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS');
 
     /**
      * increment the imap command prefix such that it counts
@@ -1191,9 +1191,65 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
             if ($mailbox) {
                 $namespace .= $delim.$mailbox;
             }
-            $commands[] = array($imap_command.' "'.$namespace."\" \"$keyword\"\r\n", $namespace);
+            if ($this->is_supported('LIST-STATUS')) {
+                $status = ' RETURN (STATUS (MESSAGES UNSEEN UIDVALIDITY UIDNEXT RECENT))';
+            }
+            else {
+                $status = '';
+            }
+            $commands[] = array($imap_command.' "'.$namespace."\" \"$keyword\"$status\r\n", $namespace);
         }
         return $commands;
+    }
+
+    /**
+     * parse an untagged STATUS response
+     *
+     * @param $response array low level parsed IMAP response segment
+     *
+     * @return array list of mailbox attributes
+     */
+    protected function parse_status_response($response) {
+        $attributes = array(
+            'messages' => false,
+            'uidvalidity' => false,
+            'uidnext' => false,
+            'recent' => false,
+            'unseen' => false
+        );
+        foreach ($response as $vals) {
+            if (in_array('MESSAGES', $vals)) {
+                $res = $this->get_adjacent_response_value($vals, -1, 'MESSAGES');
+                if (ctype_digit((string)$res)) {
+                    $attributes['messages'] = $this->get_adjacent_response_value($vals, -1, 'MESSAGES');
+                }
+            }
+            if (in_array('UIDNEXT', $vals)) {
+                $res = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
+                if (ctype_digit((string)$res)) {
+                    $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
+                }
+            }
+            if (in_array('UIDVALIDITY', $vals)) {
+                $res = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
+                if (ctype_digit((string)$res)) {
+                    $attributes['uidvalidity'] = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
+                }
+            }
+            if (in_array('RECENT', $vals)) {
+                $res = $this->get_adjacent_response_value($vals, -1, 'RECENT');
+                if (ctype_digit((string)$res)) {
+                    $attributes['recent'] = $this->get_adjacent_response_value($vals, -1, 'RECENT');
+                }
+            }
+            if (in_array('UNSEEN', $vals)) {
+                $res = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
+                if (ctype_digit((string)$res)) {
+                    $attributes['unseen'] = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
+                }
+            }
+        }
+        return $attributes;
     }
 
 }
@@ -1764,10 +1820,17 @@ class Hm_IMAP extends Hm_IMAP_Cache {
 
             $this->send_command($command);
             $result = $this->get_response($this->folder_max, true);
+            print_r($result);
 
             /* loop through the "parsed" response. Each iteration is one folder */
             foreach ($result as $vals) {
 
+                if (in_array('STATUS', $vals)) {
+                    print_r($vals);
+                    $status_values = $this->parse_status_response(array($vals));
+                    /* TODO: update cache here */
+                    continue;
+                }
                 /* break at the end of the list */
                 if (!isset($vals[0]) || $vals[0] == 'A'.$this->command_count) {
                     continue;
@@ -3018,62 +3081,34 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         return $status;
     }
 
+    /**
+     * issue IMAP status command on a mailbox
+     *
+     * @param $mailbox string IMAP mailbox to check
+     * @param $args array list of properties to fetch
+     *
+     * @return array list of attribute values discovered
+     */
     public function get_mailbox_status($mailbox, $args=array('UNSEEN', 'UIDVALIDITY', 'UIDNEXT', 'MESSAGES', 'RECENT')) {
         $command = 'STATUS "'.$this->utf7_encode($mailbox).'" ('.implode(' ', $args).")\r\n";
         $this->send_command($command);
         $response = $this->get_response(false, true);
-        $attributes = array(
-            'messages' => false,
-            'uidvalidity' => false,
-            'uidnext' => false,
-            'recent' => false,
-            'unseen' => false
-        );
         if ($this->check_response($response, true)) {
-            foreach ($response as $vals) {
-                if (in_array('MESSAGES', $vals)) {
-                    $res = $this->get_adjacent_response_value($vals, -1, 'MESSAGES');
-                    if (ctype_digit((string)$res)) {
-                        $attributes['messages'] = $this->get_adjacent_response_value($vals, -1, 'MESSAGES');
-                    }
-                }
-                if (in_array('UIDNEXT', $vals)) {
-                    $res = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
-                    if (ctype_digit((string)$res)) {
-                        $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
-                    }
-                }
-                if (in_array('UIDVALIDITY', $vals)) {
-                    $res = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
-                    if (ctype_digit((string)$res)) {
-                        $attributes['uidvalidity'] = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
-                    }
-                }
-                if (in_array('RECENT', $vals)) {
-                    $res = $this->get_adjacent_response_value($vals, -1, 'RECENT');
-                    if (ctype_digit((string)$res)) {
-                        $attributes['recent'] = $this->get_adjacent_response_value($vals, -1, 'RECENT');
-                    }
-                }
-                if (in_array('UNSEEN', $vals)) {
-                    $res = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
-                    if (ctype_digit((string)$res)) {
-                        $attributes['unseen'] = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
-                    }
-                }
-            }
+            $attributes = $this->parse_status_response($response);
+            /* TODO: update cache here */
         }
-        /* check cache here */
         return $attributes;
     }
+
 
 }
 
 /*
  * TODO:
+ * absstract cache bust based on STATUS/SELECT/LIST-STATUS responses, add to STATUS and LIST-STATUS
  * UNSELECT extension support
- * LIST-STATUS support
  * CREATE-SPECIAL-USE support
  * LOGINDISABLED / STARTTLS support
+ * APPEND and MULTI-APPEND support
  */
 ?>
