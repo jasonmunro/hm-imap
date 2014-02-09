@@ -54,6 +54,10 @@ assert_equal( true, strstr( $caps, 'CAPABILITY' ) );
 $mailbox_list = $imap->get_mailbox_list();
 assert_equal( true, isset($mailbox_list['INBOX']));
 
+$status = $imap->get_mailbox_status( 'INBOX' );
+assert_equal( true, isset( $status['messages'] ) );
+assert_equal( true, ctype_digit( $status['messages'] ) );
+
 $folder_detail = $imap->select_mailbox( 'INBOX' );
 assert_equal( 1, $folder_detail['selected'] );
 assert_equal( 'selected', $imap->get_state() );
