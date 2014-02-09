@@ -1186,51 +1186,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
     /**
-     * fetch IMAP server capability response
-     *
-     * @return string capability response
-     */
-    public function get_capability() {
-        if ( $this->capability ) {
-            return $this->capability;
-        }
-        else {
-            $command = "CAPABILITY\r\n";
-            $this->send_command($command);
-            $response = $this->get_response();
-            $this->capability = $response[0];
-            $this->debug['CAPS'] = $this->capability;
-            $this->parse_extensions_from_capability();
-            return $this->capability;
-        }
-    }
-
-    /**
-     * check if an IMAP extension is supported by the server
-     *
-     * @param $extension string name of an extension
-     * 
-     * @return bool true if the extension is supported
-     */
-    public function is_supported( $extension ) {
-        return in_array(strtolower($extension), $this->supported_extensions);
-    }
-
-    /**
-     * output IMAP session debug info
-     *
-     * @param $full bool flag to enable full IMAP response display
-     *
-     * @return void
-     */
-    public function show_debug($full=false) {
-        printf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
-        if ($full) {
-            printf("Response %s", print_r($this->responses, true));
-        }
-    }
-
-    /**
      * build a QRESYNC IMAP extension paramater for a SELECT statement
      *
      * @return string param to use
@@ -1246,119 +1201,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             }
         }
         return $param;
-    }
-
-    /**
-     * select a mailbox
-     *
-     * @param $mailbox string the mailbox to attempt to select
-     *
-     * @return array list of information about the selected mailbox
-     */
-    public function select_mailbox($mailbox) {
-        $box = $this->utf7_encode(str_replace('"', '\"', $mailbox));
-        if (!$this->is_clean($box, 'mailbox')) {
-            return false;
-        }
-        if (!$this->read_only) {
-            $command = "SELECT \"$box\"";
-        }
-        else {
-            $command = "EXAMINE \"$box\"";
-        }
-        if ($this->is_supported('QRESYNC')) {
-            $command .= $this->build_qresync_params();
-        }
-        elseif ($this->is_supported('CONDSTORE')) {
-            $command .= ' (CONDSTORE)';
-        }
-        $this->send_command($command."\r\n");
-        $res = $this->get_response(false, true);
-        $status = $this->check_response($res, true);
-        $result = array();
-        if ($status) {
-            list($qresync, $attributes) = $this->parse_untagged_responses($res);
-            if (!$qresync) {
-                $this->check_mailbox_state_change($attributes);
-            }
-            else {
-                $this->debug[] = sprintf('Cache bust avoided on %s with QRESYNC!', $this->selected_mailbox['name']);
-            }
-            $result = array(
-                'selected' => $status,
-                'uidvalidity' => $attributes['uidvalidity'],
-                'exists' => $attributes['exists'],
-                'first_unseen' => $attributes['unseen'],
-                'uidnext' => $attributes['uidnext'],
-                'flags' => $attributes['flags'],
-                'permanentflags' => $attributes['pflags'],
-                'recent' => $attributes['recent'],
-                'nomodseq' => $attributes['nomodseq'],
-                'modseq' => $attributes['modseq'],
-            );
-            $this->state = 'selected';
-            $this->selected_mailbox = array('name' => $box, 'detail' => $result);
-        }
-        return $result;
-    }
-
-    /**
-     * authenticate the username/password
-     *
-     * @param $username IMAP login name
-     * @param $password IMAP password
-     *
-     * @return bool true on sucessful login
-     */
-    public function authenticate($username, $password) {
-        $this->starttls();
-        switch (strtolower($this->auth)) {
-            case 'cram-md5':
-                $this->banner = $this->fgets(1024);
-                $cram1 = 'A'.$this->command_number().' AUTHENTICATE CRAM-MD5'."\r\n";
-                fputs ($this->handle, $cram1);
-                $response = $this->fgets(1024);
-                $this->responses[] = $response;
-                $challenge = base64_decode(substr(trim($response), 1));
-                $pass .= str_repeat(chr(0x00), (64-strlen($password)));
-                $ipad = str_repeat(chr(0x36), 64);
-                $opad = str_repeat(chr(0x5c), 64);
-                $digest = bin2hex(pack("H*", md5(($pass ^ $opad).pack("H*", md5(($pass ^ $ipad).$challenge)))));
-                $challenge_response = base64_encode($username.' '.$digest);
-                fputs($this->handle, $challenge_response."\r\n");
-                break;
-            default:
-                $login = 'LOGIN "'.str_replace('"', '\"', $username).'" "'.str_replace('"', '\"', $password). "\"\r\n";
-                $this->send_command($login);
-                break;
-        }
-        $res = $this->get_response();
-        $authed = false;
-        if (is_array($res) && !empty($res)) {
-            $response = array_pop($res);
-            if (!$this->auth) {
-                if (isset($res[1])) {
-                    $this->banner = $res[1];
-                }
-                if (isset($res[0])) {
-                    $this->banner = $res[0];
-                }
-            }
-            if (stristr($response, 'A'.$this->command_count.' OK')) {
-                $authed = true;
-                $this->state = 'authenticated';
-            }
-        }
-        if ( $authed ) {
-            $this->debug[] = 'Logged in successfully as '.$username;
-            $this->get_capability();
-            $this->enable();
-            //$this->enable_compression();
-        }
-        else {
-            $this->debug[] = 'Log in for '.$username.' FAILED';
-        }
-        return $authed;
     }
 
     /**
@@ -1519,6 +1361,196 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
     /**
+     * helper function to build IMAP LIST commands
+     *
+     * @param $lsub bool flag to use LSUB
+     *
+     * @return array IMAP LIST/LSUB commands
+     */
+    private function build_list_commands($lsub) {
+        $commands = array();
+        if ($lsub) {
+            $imap_command = 'LSUB';
+        }
+        else {
+            $imap_command = 'LIST';
+        }
+        $namespaces = $this->get_namespaces();
+        foreach ($namespaces as $nsvals) {
+
+            /* build IMAP command */
+            $namespace = $nsvals['prefix'];
+            $delim = $nsvals['delim'];
+            $ns_class = $nsvals['class'];
+            if (strtoupper($namespace) == 'INBOX') { 
+                $namespace = '';
+            }
+
+            /* send command to the IMAP server and fetch the response */
+            $commands[] = array($imap_command.' "'.$namespace."\" \"*\"\r\n", $namespace);
+        }
+        return $commands;
+    }
+
+    /**
+     * fetch IMAP server capability response
+     *
+     * @return string capability response
+     */
+    public function get_capability() {
+        if ( $this->capability ) {
+            return $this->capability;
+        }
+        else {
+            $command = "CAPABILITY\r\n";
+            $this->send_command($command);
+            $response = $this->get_response();
+            $this->capability = $response[0];
+            $this->debug['CAPS'] = $this->capability;
+            $this->parse_extensions_from_capability();
+            return $this->capability;
+        }
+    }
+
+    /**
+     * check if an IMAP extension is supported by the server
+     *
+     * @param $extension string name of an extension
+     * 
+     * @return bool true if the extension is supported
+     */
+    public function is_supported( $extension ) {
+        return in_array(strtolower($extension), $this->supported_extensions);
+    }
+
+    /**
+     * output IMAP session debug info
+     *
+     * @param $full bool flag to enable full IMAP response display
+     *
+     * @return void
+     */
+    public function show_debug($full=false) {
+        printf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
+        if ($full) {
+            printf("Response %s", print_r($this->responses, true));
+        }
+    }
+
+    /**
+     * select a mailbox
+     *
+     * @param $mailbox string the mailbox to attempt to select
+     *
+     * @return array list of information about the selected mailbox
+     */
+    public function select_mailbox($mailbox) {
+        $box = $this->utf7_encode(str_replace('"', '\"', $mailbox));
+        if (!$this->is_clean($box, 'mailbox')) {
+            return false;
+        }
+        if (!$this->read_only) {
+            $command = "SELECT \"$box\"";
+        }
+        else {
+            $command = "EXAMINE \"$box\"";
+        }
+        if ($this->is_supported('QRESYNC')) {
+            $command .= $this->build_qresync_params();
+        }
+        elseif ($this->is_supported('CONDSTORE')) {
+            $command .= ' (CONDSTORE)';
+        }
+        $this->send_command($command."\r\n");
+        $res = $this->get_response(false, true);
+        $status = $this->check_response($res, true);
+        $result = array();
+        if ($status) {
+            list($qresync, $attributes) = $this->parse_untagged_responses($res);
+            if (!$qresync) {
+                $this->check_mailbox_state_change($attributes);
+            }
+            else {
+                $this->debug[] = sprintf('Cache bust avoided on %s with QRESYNC!', $this->selected_mailbox['name']);
+            }
+            $result = array(
+                'selected' => $status,
+                'uidvalidity' => $attributes['uidvalidity'],
+                'exists' => $attributes['exists'],
+                'first_unseen' => $attributes['unseen'],
+                'uidnext' => $attributes['uidnext'],
+                'flags' => $attributes['flags'],
+                'permanentflags' => $attributes['pflags'],
+                'recent' => $attributes['recent'],
+                'nomodseq' => $attributes['nomodseq'],
+                'modseq' => $attributes['modseq'],
+            );
+            $this->state = 'selected';
+            $this->selected_mailbox = array('name' => $box, 'detail' => $result);
+        }
+        return $result;
+    }
+
+    /**
+     * authenticate the username/password
+     *
+     * @param $username IMAP login name
+     * @param $password IMAP password
+     *
+     * @return bool true on sucessful login
+     */
+    public function authenticate($username, $password) {
+        $this->starttls();
+        switch (strtolower($this->auth)) {
+            case 'cram-md5':
+                $this->banner = $this->fgets(1024);
+                $cram1 = 'A'.$this->command_number().' AUTHENTICATE CRAM-MD5'."\r\n";
+                fputs ($this->handle, $cram1);
+                $response = $this->fgets(1024);
+                $this->responses[] = $response;
+                $challenge = base64_decode(substr(trim($response), 1));
+                $pass .= str_repeat(chr(0x00), (64-strlen($password)));
+                $ipad = str_repeat(chr(0x36), 64);
+                $opad = str_repeat(chr(0x5c), 64);
+                $digest = bin2hex(pack("H*", md5(($pass ^ $opad).pack("H*", md5(($pass ^ $ipad).$challenge)))));
+                $challenge_response = base64_encode($username.' '.$digest);
+                fputs($this->handle, $challenge_response."\r\n");
+                break;
+            default:
+                $login = 'LOGIN "'.str_replace('"', '\"', $username).'" "'.str_replace('"', '\"', $password). "\"\r\n";
+                $this->send_command($login);
+                break;
+        }
+        $res = $this->get_response();
+        $authed = false;
+        if (is_array($res) && !empty($res)) {
+            $response = array_pop($res);
+            if (!$this->auth) {
+                if (isset($res[1])) {
+                    $this->banner = $res[1];
+                }
+                if (isset($res[0])) {
+                    $this->banner = $res[0];
+                }
+            }
+            if (stristr($response, 'A'.$this->command_count.' OK')) {
+                $authed = true;
+                $this->state = 'authenticated';
+            }
+        }
+        if ( $authed ) {
+            $this->debug[] = 'Logged in successfully as '.$username;
+            $this->get_capability();
+            $this->enable();
+            //$this->enable_compression();
+        }
+        else {
+            $this->debug[] = 'Log in for '.$username.' FAILED';
+        }
+        return $authed;
+    }
+
+    /**
      * use IMAP NOOP to poll for untagged server messages
      *
      * @return array list of properties that have changed since SELECT
@@ -1539,6 +1571,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         }
         return $result;
     }
+
     /**
      * attempt enable IMAP COMPRESS extension
      * TODO: currently does not work ...
@@ -2058,38 +2091,6 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             return $this->cache_return_val($uids, $cache_command);
         }
         return $uids;
-    }
-
-    /**
-     * helper function to build IMAP LIST commands
-     *
-     * @param $lsub bool flag to use LSUB
-     *
-     * @return array IMAP LIST/LSUB commands
-     */
-    private function build_list_commands($lsub) {
-        $commands = array();
-        if ($lsub) {
-            $imap_command = 'LSUB';
-        }
-        else {
-            $imap_command = 'LIST';
-        }
-        $namespaces = $this->get_namespaces();
-        foreach ($namespaces as $nsvals) {
-
-            /* build IMAP command */
-            $namespace = $nsvals['prefix'];
-            $delim = $nsvals['delim'];
-            $ns_class = $nsvals['class'];
-            if (strtoupper($namespace) == 'INBOX') { 
-                $namespace = '';
-            }
-
-            /* send command to the IMAP server and fetch the response */
-            $commands[] = array($imap_command.' "'.$namespace."\" \"*\"\r\n", $namespace);
-        }
-        return $commands;
     }
 
     /**
