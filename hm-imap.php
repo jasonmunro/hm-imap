@@ -1240,8 +1240,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if (isset($this->selected_mailbox['detail'])) {
             $box = $this->selected_mailbox['detail'];
             if (isset($box['uidvalidity']) && $box['uidvalidity'] && isset($box['modseq']) && $box['modseq']) {
-                /* TODO: validate $box values by type */
-                $param = sprintf(' (QRESYNC (%s %s))', $box['uidvalidity'], $box['modseq']);
+                if ($this->is_clean($box['uidvalidity'], 'uid') && $this->is_clean($box['modseq'], 'uid')) {
+                    $param = sprintf(' (QRESYNC (%s %s))', $box['uidvalidity'], $box['modseq']);
+                }
             }
         }
         return $param;
@@ -1386,6 +1387,9 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             if (in_array('MODSEQ', $vals)) {
                 $attributes['modseq'] = $this->get_adjacent_response_value($vals, -2, 'MODSEQ');
             }
+            if (in_array('HIGHESTMODSEQ', $vals)) {
+                $attributes['modseq'] = $this->get_adjacent_response_value($vals, -1, 'HIGHESTMODSEQ');
+            }
             if (in_array('UIDNEXT', $vals)) {
                 $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
             }
@@ -1434,6 +1438,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                     $key = $this->cache_keys[$this->selected_mailbox['name']];
                     if (isset($this->cache_data[$key])) {
                         foreach ($this->cache_data[$key] as $command => $result) {
+                            /* TODO: update other cached commands */
                             if (strstr($command, 'UID FETCH')) {
                                 if (isset($result[$uid])) {
                                     unset($this->cache_data[$key][$command][$uid]);
@@ -1468,6 +1473,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                     $key = $this->cache_keys[$this->selected_mailbox['name']];
                     if (isset($this->cache_data[$key])) {
                         foreach ($this->cache_data[$key] as $command => $result) {
+                            /* TODO: update other cached commands */
                             if (strstr($command, 'UID FETCH')) {
                                 if (isset($result[$uid]['flags'])) {
                                     $this->cache_data[$key][$command][$uid]['flags'] = implode(' ', $flags);
