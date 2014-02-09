@@ -156,6 +156,9 @@ assert_equal( true, stristr($headers['Flags'], 'flagged' ) );
 $unflagged = $imap->message_action('UNFLAG', array( 3 ) );
 assert_equal( true, $unflagged );
 
+$unselect = $imap->unselect_mailbox();
+assert_equal( true, $unselect );
+
 $imap->disconnect();
 assert_equal( 'disconnected', $imap->get_state() );
 
