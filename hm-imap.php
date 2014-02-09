@@ -1217,7 +1217,6 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
                     $key = $this->cache_keys[$this->selected_mailbox['name']];
                     if (isset($this->cache_data[$key])) {
                         foreach ($this->cache_data[$key] as $command => $result) {
-                            /* TODO: update other cached commands */
                             if (strstr($command, 'UID FETCH')) {
                                 if (isset($result[$uid])) {
                                     unset($this->cache_data[$key][$command][$uid]);
@@ -1226,6 +1225,14 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
                                 }
                             }
                             elseif (strstr($command, 'UID SORT')) {
+                                $index = array_search($uid, $result);
+                                if ($index !== false) {
+                                    unset($this->cache_data[$key][$command][$index]);
+                                    $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
+                                    $res = 1;
+                                }
+                            }
+                            elseif (strstr($command, 'UID SEARCH')) {
                                 $index = array_search($uid, $result);
                                 if ($index !== false) {
                                     unset($this->cache_data[$key][$command][$index]);
@@ -1252,10 +1259,19 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
                     $key = $this->cache_keys[$this->selected_mailbox['name']];
                     if (isset($this->cache_data[$key])) {
                         foreach ($this->cache_data[$key] as $command => $result) {
-                            /* TODO: update other cached commands */
                             if (strstr($command, 'UID FETCH')) {
                                 if (isset($result[$uid]['flags'])) {
                                     $this->cache_data[$key][$command][$uid]['flags'] = implode(' ', $flags);
+                                    $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
+                                    $res = 1;
+                                }
+                                elseif (isset($result['flags'])) {
+                                    $this->cache_data[$key][$command]['flags'] = implode(' ', $flags);
+                                    $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
+                                    $res = 1;
+                                }
+                                elseif (isset($result['Flags'])) {
+                                    $this->cache_data[$key][$command]['Flags'] = implode(' ', $flags);
                                     $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
                                     $res = 1;
                                 }
