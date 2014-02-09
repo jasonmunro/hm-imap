@@ -36,6 +36,7 @@ class Hm_IMAP_Base {
     protected $cached_response = false;  // flag to indicate we are using a cached response
     protected $supported_extensions;     // IMAP extensions in the CAPABILITY response
     protected $enabled_extensions;       // IMAP extensions validated by the ENABLE response
+    protected $capability = false;       // IMAP CAPABILITY response
 
 
     /* attributes that can be set for the IMAP connaction */
@@ -1037,7 +1038,167 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
         return $res;
     }
 
+    /**
+     * build a list of IMAP extensions from the capability response
+     *
+     * @return void
+     */
+    protected function parse_extensions_from_capability() {
+        $extensions = array();
+        foreach (explode(' ', $this->capability) as $word) {
+            if (!in_array(strtolower($word), array('ok', 'completed', 'imap4rev1', 'capability'))) {
+                $extensions[] = strtolower($word);
+            }
+        }
+        $this->supported_extensions = $extensions;
+    }
+
+    /**
+     * build a QRESYNC IMAP extension paramater for a SELECT statement
+     *
+     * @return string param to use
+     */
+    protected function build_qresync_params() {
+        $param = '';
+        if (isset($this->selected_mailbox['detail'])) {
+            $box = $this->selected_mailbox['detail'];
+            if (isset($box['uidvalidity']) && $box['uidvalidity'] && isset($box['modseq']) && $box['modseq']) {
+                if ($this->is_clean($box['uidvalidity'], 'uid') && $this->is_clean($box['modseq'], 'uid')) {
+                    $param = sprintf(' (QRESYNC (%s %s))', $box['uidvalidity'], $box['modseq']);
+                }
+            }
+        }
+        return $param;
+    }
+
+    /**
+     * collect useful untagged responses about mailbox state from certain command responses
+     *
+     * @param $data array low level parsed IMAP response segment
+     *
+     * @return array list of properties
+     */
+    protected function parse_untagged_responses($data) {
+        $cache_updates = 0;
+        $cache_updated = 0;
+        $qresync = false;
+        $attributes = array(
+            'uidnext' => false,
+            'unseen' => false,
+            'uidvalidity' => false,
+            'exists' => false,
+            'pflags' => false,
+            'recent' => false,
+            'modseq' => false,
+            'flags' => false,
+            'nomodseq' => false
+        );
+        foreach($data as $vals) {
+            if (in_array('NOMODSEQ', $vals)) {
+                $attributes['nomodseq'] = true;
+            }
+            if (in_array('MODSEQ', $vals)) {
+                $attributes['modseq'] = $this->get_adjacent_response_value($vals, -2, 'MODSEQ');
+            }
+            if (in_array('HIGHESTMODSEQ', $vals)) {
+                $attributes['modseq'] = $this->get_adjacent_response_value($vals, -1, 'HIGHESTMODSEQ');
+            }
+            if (in_array('UIDNEXT', $vals)) {
+                $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
+            }
+            if (in_array('UNSEEN', $vals)) {
+                $attributes['unseen'] = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
+            }
+            if (in_array('UIDVALIDITY', $vals)) {
+                $attributes['uidvalidity'] = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
+            }
+            if (in_array('EXISTS', $vals)) {
+                $attributes['exists'] = $this->get_adjacent_response_value($vals, 1, 'EXISTS');
+            }
+            if (in_array('RECENT', $vals)) {
+                $attributes['recent'] = $this->get_adjacent_response_value($vals, 1, 'RECENT');
+            }
+            if (in_array('PERMANENTFLAGS', $vals)) {
+                $attributes['pflags'] = $this->get_flag_values($vals);
+            }
+            if (in_array('FLAGS', $vals) && !in_array('MODSEQ', $vals)) {
+                $attributes['flags'] = $this->get_flag_values($vals);
+            }
+            if (in_array('FETCH', $vals) || in_array('VANISHED', $vals)) {
+                $cache_updates++;
+                $cache_updated += $this->update_cache_data($vals);
+            }
+        }
+        if ($cache_updates && $cache_updates == $cache_updated) {
+            $qresync = true;
+        }
+        return array($qresync, $attributes);
+    }
+
+    /**
+     * examine NOOP/SELECT/EXAMINE untagged responses to determine if the mailbox state changed
+     *
+     * @param $attributes array list of attribute name/value pairs
+     *
+     * @return void
+     */
+    protected function check_mailbox_state_change($attributes) {
+        if (!$this->selected_mailbox) {
+            return;
+        }
+        $state_changed = false;
+        foreach($attributes as $name => $value) {
+            if ($value !== false) {
+                if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
+                    $state_changed = true;
+                    $this->selected_mailbox['detail'][$name] = $value;
+                    $result[ $name ] = $value;
+                }
+            }
+        }
+        if ($state_changed || $attributes['nomodseq']) {
+            $this->bust_cache($this->selected_mailbox['name']);
+        }
+    }
+
+    /**
+     * helper function to build IMAP LIST commands
+     *
+     * @param $lsub bool flag to use LSUB
+     *
+     * @return array IMAP LIST/LSUB commands
+     */
+    protected function build_list_commands($lsub, $mailbox, $keyword) {
+        $commands = array();
+        if ($lsub) {
+            $imap_command = 'LSUB';
+        }
+        else {
+            $imap_command = 'LIST';
+        }
+        $namespaces = $this->get_namespaces();
+        foreach ($namespaces as $nsvals) {
+
+            /* build IMAP command */
+            $namespace = $nsvals['prefix'];
+            $delim = $nsvals['delim'];
+            $ns_class = $nsvals['class'];
+            if (strtoupper($namespace) == 'INBOX') { 
+                $namespace = '';
+            }
+
+            /* send command to the IMAP server and fetch the response */
+            if ($mailbox) {
+                $namespace .= $delim.$mailbox;
+            }
+            $commands[] = array($imap_command.' "'.$namespace."\" \"$keyword\"\r\n", $namespace);
+        }
+        return $commands;
+    }
+
 }
+
+/* cache related methods */
 class Hm_IMAP_Cache extends Hm_IMAP_Parser {
 
     /**
@@ -1271,7 +1432,6 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
         }
     }
 
-
 }
 
 /* public interface to IMAP commands */
@@ -1299,7 +1459,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     /* internal use */
     private $state = 'disconnected';
     private $stream_size = 0;
-    private $capability = false;
 
     /**
      * constructor
@@ -1308,260 +1467,56 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
-     * build a list of IMAP extensions from the capability response
+     * connect to the imap server
      *
-     * @return void
+     * @param $config array list of configuration options for this connections
+     *
+     * @return bool true on connection sucess
      */
-    private function parse_extensions_from_capability() {
-        $extensions = array();
-        foreach (explode(' ', $this->capability) as $word) {
-            if (!in_array(strtolower($word), array('ok', 'completed', 'imap4rev1', 'capability'))) {
-                $extensions[] = strtolower($word);
-            }
-        }
-        $this->supported_extensions = $extensions;
-    }
-
-    /**
-     * build a QRESYNC IMAP extension paramater for a SELECT statement
-     *
-     * @return string param to use
-     */
-    private function build_qresync_params() {
-        $param = '';
-        if (isset($this->selected_mailbox['detail'])) {
-            $box = $this->selected_mailbox['detail'];
-            if (isset($box['uidvalidity']) && $box['uidvalidity'] && isset($box['modseq']) && $box['modseq']) {
-                if ($this->is_clean($box['uidvalidity'], 'uid') && $this->is_clean($box['modseq'], 'uid')) {
-                    $param = sprintf(' (QRESYNC (%s %s))', $box['uidvalidity'], $box['modseq']);
-                }
-            }
-        }
-        return $param;
-    }
-
-    /**
-     * collect useful untagged responses about mailbox state from certain command responses
-     *
-     * @param $data array low level parsed IMAP response segment
-     *
-     * @return array list of properties
-     */
-    private function parse_untagged_responses($data) {
-        $cache_updates = 0;
-        $cache_updated = 0;
-        $qresync = false;
-        $attributes = array(
-            'uidnext' => false,
-            'unseen' => false,
-            'uidvalidity' => false,
-            'exists' => false,
-            'pflags' => false,
-            'recent' => false,
-            'modseq' => false,
-            'flags' => false,
-            'nomodseq' => false
-        );
-        foreach($data as $vals) {
-            if (in_array('NOMODSEQ', $vals)) {
-                $attributes['nomodseq'] = true;
-            }
-            if (in_array('MODSEQ', $vals)) {
-                $attributes['modseq'] = $this->get_adjacent_response_value($vals, -2, 'MODSEQ');
-            }
-            if (in_array('HIGHESTMODSEQ', $vals)) {
-                $attributes['modseq'] = $this->get_adjacent_response_value($vals, -1, 'HIGHESTMODSEQ');
-            }
-            if (in_array('UIDNEXT', $vals)) {
-                $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
-            }
-            if (in_array('UNSEEN', $vals)) {
-                $attributes['unseen'] = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
-            }
-            if (in_array('UIDVALIDITY', $vals)) {
-                $attributes['uidvalidity'] = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
-            }
-            if (in_array('EXISTS', $vals)) {
-                $attributes['exists'] = $this->get_adjacent_response_value($vals, 1, 'EXISTS');
-            }
-            if (in_array('RECENT', $vals)) {
-                $attributes['recent'] = $this->get_adjacent_response_value($vals, 1, 'RECENT');
-            }
-            if (in_array('PERMANENTFLAGS', $vals)) {
-                $attributes['pflags'] = $this->get_flag_values($vals);
-            }
-            if (in_array('FLAGS', $vals) && !in_array('MODSEQ', $vals)) {
-                $attributes['flags'] = $this->get_flag_values($vals);
-            }
-            if (in_array('FETCH', $vals) || in_array('VANISHED', $vals)) {
-                $cache_updates++;
-                $cache_updated += $this->update_cache_data($vals);
-            }
-        }
-        if ($cache_updates && $cache_updates == $cache_updated) {
-            $qresync = true;
-        }
-        return array($qresync, $attributes);
-    }
-
-    /**
-     * examine NOOP/SELECT/EXAMINE untagged responses to determine if the mailbox state changed
-     *
-     * @param $attributes array list of attribute name/value pairs
-     *
-     * @return void
-     */
-    private function check_mailbox_state_change($attributes) {
-        if (!$this->selected_mailbox) {
-            return;
-        }
-        $state_changed = false;
-        foreach($attributes as $name => $value) {
-            if ($value !== false) {
-                if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
-                    $state_changed = true;
-                    $this->selected_mailbox['detail'][$name] = $value;
-                    $result[ $name ] = $value;
-                }
-            }
-        }
-        if ($state_changed || $attributes['nomodseq']) {
-            $this->bust_cache($this->selected_mailbox['name']);
-        }
-    }
-
-    /**
-     * helper function to build IMAP LIST commands
-     *
-     * @param $lsub bool flag to use LSUB
-     *
-     * @return array IMAP LIST/LSUB commands
-     */
-    private function build_list_commands($lsub, $mailbox, $keyword) {
-        $commands = array();
-        if ($lsub) {
-            $imap_command = 'LSUB';
-        }
-        else {
-            $imap_command = 'LIST';
-        }
-        $namespaces = $this->get_namespaces();
-        foreach ($namespaces as $nsvals) {
-
-            /* build IMAP command */
-            $namespace = $nsvals['prefix'];
-            $delim = $nsvals['delim'];
-            $ns_class = $nsvals['class'];
-            if (strtoupper($namespace) == 'INBOX') { 
-                $namespace = '';
-            }
-
-            /* send command to the IMAP server and fetch the response */
-            if ($mailbox) {
-                $namespace .= $delim.$mailbox;
-            }
-            $commands[] = array($imap_command.' "'.$namespace."\" \"$keyword\"\r\n", $namespace);
-        }
-        return $commands;
-    }
-
-    /**
-     * fetch IMAP server capability response
-     *
-     * @return string capability response
-     */
-    public function get_capability() {
-        if ( $this->capability ) {
-            return $this->capability;
-        }
-        else {
-            $command = "CAPABILITY\r\n";
-            $this->send_command($command);
-            $response = $this->get_response();
-            $this->capability = $response[0];
-            $this->debug['CAPS'] = $this->capability;
-            $this->parse_extensions_from_capability();
-            return $this->capability;
-        }
-    }
-
-    /**
-     * check if an IMAP extension is supported by the server
-     *
-     * @param $extension string name of an extension
-     * 
-     * @return bool true if the extension is supported
-     */
-    public function is_supported( $extension ) {
-        return in_array(strtolower($extension), $this->supported_extensions);
-    }
-
-    /**
-     * output IMAP session debug info
-     *
-     * @param $full bool flag to enable full IMAP response display
-     *
-     * @return void
-     */
-    public function show_debug($full=false) {
-        printf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
-        if ($full) {
-            printf("Response %s", print_r($this->responses, true));
-        }
-    }
-
-    /**
-     * select a mailbox
-     *
-     * @param $mailbox string the mailbox to attempt to select
-     *
-     * @return array list of information about the selected mailbox
-     */
-    public function select_mailbox($mailbox) {
-        $box = $this->utf7_encode(str_replace('"', '\"', $mailbox));
-        if (!$this->is_clean($box, 'mailbox')) {
-            return false;
-        }
-        if (!$this->read_only) {
-            $command = "SELECT \"$box\"";
-        }
-        else {
-            $command = "EXAMINE \"$box\"";
-        }
-        if ($this->is_supported('QRESYNC')) {
-            $command .= $this->build_qresync_params();
-        }
-        elseif ($this->is_supported('CONDSTORE')) {
-            $command .= ' (CONDSTORE)';
-        }
-        $this->send_command($command."\r\n");
-        $res = $this->get_response(false, true);
-        $status = $this->check_response($res, true);
-        $result = array();
-        if ($status) {
-            list($qresync, $attributes) = $this->parse_untagged_responses($res);
-            if (!$qresync) {
-                $this->check_mailbox_state_change($attributes);
+    public function connect( $config ) {
+        if (isset($config['username']) && isset($config['password'])) {
+            $this->commands = array();
+            $this->debug = array();
+            $this->capability = false;
+            $this->responses = array();
+            $this->current_command = false;
+            $this->apply_config($config);
+            if ($this->tls) {
+                $this->server = 'tls://'.$this->server;
+            } 
+            $this->debug[] = 'Connecting to '.$this->server.' on port '.$this->port;
+            $this->handle = @fsockopen($this->server, $this->port, $errorno, $errorstr, 30);
+            if (is_resource($this->handle)) {
+                $this->debug[] = 'Successfully opened port to the IMAP server';
+                $this->state = 'connected';
+                return $this->authenticate($config['username'], $config['password']);
             }
             else {
-                $this->debug[] = sprintf('Cache bust avoided on %s with QRESYNC!', $this->selected_mailbox['name']);
+                $this->debug[] = 'Could not connect to the IMAP server';
+                $this->debug[] = 'fsockopen errors #'.$errorno.'. '.$errorstr;
+                return false;
             }
-            $result = array(
-                'selected' => $status,
-                'uidvalidity' => $attributes['uidvalidity'],
-                'exists' => $attributes['exists'],
-                'first_unseen' => $attributes['unseen'],
-                'uidnext' => $attributes['uidnext'],
-                'flags' => $attributes['flags'],
-                'permanentflags' => $attributes['pflags'],
-                'recent' => $attributes['recent'],
-                'nomodseq' => $attributes['nomodseq'],
-                'modseq' => $attributes['modseq'],
-            );
-            $this->state = 'selected';
-            $this->selected_mailbox = array('name' => $box, 'detail' => $result);
         }
-        return $result;
+        else {
+            $this->debug[] = 'username and password must be set in the connect() config argument';
+            return false;
+        }
+    }
+
+    /**
+     * close the IMAP connection
+     *
+     * @return void
+     */
+    public function disconnect() {
+        $command = "LOGOUT\r\n";
+        $this->state = 'disconnected';
+        $this->selected_mailbox = false;
+        $this->send_command($command);
+        $result = $this->get_response();
+        if (is_resource($this->handle)) {
+            fclose($this->handle);
+        }
     }
 
     /**
@@ -1624,6 +1579,434 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
+     * use the ENABLE extension to tell the IMAP server what extensions we support
+     *
+     * @return void
+     */
+    public function enable() {
+        $extensions = array();
+        if ($this->is_supported('ENABLE')) {
+            if ($this->is_supported('QRESYNC')) {
+                $extension_string = implode(' ', array_filter($this->client_extensions, function($val) { return $val != 'CONDSTORE'; }));
+            }
+            else {
+                $extension_string = implode(' ', $this->client_extensions);
+            }
+            $command = 'ENABLE '.$extension_string."\r\n";
+            $this->send_command($command);
+            $res = $this->get_response(false, true);
+            if ($this->check_response($res, true)) {
+                foreach($res as $vals) {
+                    if (in_array('ENABLED', $vals)) {
+                        $extensions[] = $this->get_adjacent_response_value($vals, -1, 'ENABLED');
+                    }
+                }
+            }
+            $this->enabled_extensions = $extensions;
+            $this->debug[] = sprintf("Enabled extensions: ".implode(', ', $extensions));
+        }
+        return $extensions;
+    }
+
+    /**
+     * attempt enable IMAP COMPRESS extension
+     * TODO: currently does not work ...
+     *
+     * @return void
+     */
+    public function enable_compression() {
+        if ($this->is_supported('COMPRESS=DEFLATE')) {
+            $this->send_command("COMPRESS DEFLATE\r\n");
+            $res = $this->get_response(false, true);
+            if ($this->check_response($res, true)) {
+                stream_filter_prepend($this->handle, 'zlib.inflate', STREAM_FILTER_READ);
+                stream_filter_append($this->handle, 'zlib.deflate', STREAM_FILTER_WRITE, 6);
+                $this->debug[] = 'DEFLATE compression extension activated';
+            }
+        }
+    }
+
+    /**
+     * fetch IMAP server capability response
+     *
+     * @return string capability response
+     */
+    public function get_capability() {
+        if ( $this->capability ) {
+            return $this->capability;
+        }
+        else {
+            $command = "CAPABILITY\r\n";
+            $this->send_command($command);
+            $response = $this->get_response();
+            $this->capability = $response[0];
+            $this->debug['CAPS'] = $this->capability;
+            $this->parse_extensions_from_capability();
+            return $this->capability;
+        }
+    }
+
+    /**
+     * check if an IMAP extension is supported by the server
+     *
+     * @param $extension string name of an extension
+     * 
+     * @return bool true if the extension is supported
+     */
+    public function is_supported( $extension ) {
+        return in_array(strtolower($extension), $this->supported_extensions);
+    }
+
+    /**
+     * returns current IMAP state
+     *
+     * @return string one of:
+     *                disconnected  = no IMAP server TCP connection
+     *                connected     = an IMAP server TCP connection exists
+     *                authenticated = successfully authenticated to the IMAP server
+     *                selected      = a mailbox has been selected
+     */
+    public function get_state() {
+        return $this->state;
+    }
+
+    /**
+     * decode mail fields to human readable text
+     *
+     * @param $string string field to decode
+     *
+     * @return string decoded field
+     */
+    public function decode_fld($string) {
+        if (preg_match_all("/(=\?[^\?]+\?(q|b)\?[^\?]+\?=)/i", $string, $matches)) {
+            foreach ($matches[1] as $v) {
+                $fld = substr($v, 2, -2);
+                $charset = strtolower(substr($fld, 0, strpos($fld, '?')));
+                $fld = substr($fld, (strlen($charset) + 1));
+                $encoding = $fld{0};
+                $fld = substr($fld, (strpos($fld, '?') + 1));
+                if (strtoupper($encoding) == 'B') {
+                    $fld = mb_convert_encoding(base64_decode($fld), 'UTF-8', $charset);
+                }
+                elseif (strtoupper($encoding) == 'Q') {
+                    $fld = mb_convert_encoding(quoted_printable_decode($fld), 'UTF-8', $charset);
+                }
+                $string = str_replace($v, $fld, $string);
+            }
+        }
+        return trim($string);
+    } 
+
+    /**
+     * output IMAP session debug info
+     *
+     * @param $full bool flag to enable full IMAP response display
+     *
+     * @return void
+     */
+    public function show_debug($full=false) {
+        printf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
+        if ($full) {
+            printf("Response %s", print_r($this->responses, true));
+        }
+    }
+
+    /**
+     * get a list of mailbox folders
+     *
+     * @param $lsub bool flag to limit results to subscribed folders only
+     *
+     * @return array associative array of folder details
+     */
+    public function get_mailbox_list($lsub=false, $mailbox='', $keyword='*') {
+        /* possibly limit list response to subscribed folders only */
+
+        /* defaults */
+        $folders = array();
+        $excluded = array();
+        $parents = array();
+        $delim = false;
+        $commands = $this->build_list_commands($lsub, $mailbox, $keyword);
+        $cache_command = implode('', array_map(function($v) { return $v[0]; }, $commands)).(string)$mailbox.(string)$keyword;
+        $cache = $this->check_cache($cache_command);
+        if ($cache) {
+            return $cache;
+        }
+
+        foreach($commands as $vals) {
+            $command = $vals[0];
+            $namespace = $vals[1];
+
+            $this->send_command($command);
+            $result = $this->get_response($this->folder_max, true);
+
+            /* loop through the "parsed" response. Each iteration is one folder */
+            foreach ($result as $vals) {
+
+                /* break at the end of the list */
+                if (!isset($vals[0]) || $vals[0] == 'A'.$this->command_count) {
+                    continue;
+                }
+
+                /* defaults */
+                $flags = false;
+                $flag = false;
+                $delim_flag = false;
+                $parent = '';
+                $base_name = '';
+                $folder_parts = array();
+                $no_select = false;
+                $can_have_kids = true;
+                $has_kids = false;
+                $marked = false;
+                $folder_sort_by = 'ARRIVAL';
+                $check_for_new = false;
+
+                /* full folder name, includes an absolute path of parent folders */
+                $folder = $this->utf7_decode($vals[(count($vals) - 1)]);
+
+                /* sometimes LIST responses have dupes */
+                if (isset($folders[$folder]) || !$folder) {
+                    continue;
+                }
+
+                /* folder flags */
+                foreach ($vals as $v) {
+                    if ($v == '(') {
+                        $flag = true;
+                    }
+                    elseif ($v == ')') {
+                        $flag = false;
+                        $delim_flag = true;
+                    }
+                    else {
+                        if ($flag) {
+                            $flags .= ' '.$v;
+                        }
+                        if ($delim_flag && !$delim) {
+                            $delim = $v;
+                            $delim_flag = false;
+                        }
+                    }
+                }
+
+                /* get each folder name part of the complete hierarchy */
+                $folder_parts = array();
+                if ($delim && strstr($folder, $delim)) {
+                    $temp_parts = explode($delim, $folder);
+                    foreach ($temp_parts as $g) {
+                        if (trim($g)) {
+                            $folder_parts[] = $g;
+                        }
+                    }
+                }
+                else {
+                    $folder_parts[] = $folder;
+                }
+
+                /* get the basename part of the folder name. For a folder named "inbox.sent.march"
+                 * with a delimiter of "." the basename would be "march" */
+                if (isset($folder_parts[(count($folder_parts) - 1)])) {
+                    $base_name = $folder_parts[(count($folder_parts) - 1)];
+                }
+                else {
+                    $base_name = $folder;
+                }
+
+                /* determine the parent folder basename if it exists */
+                if (isset($folder_parts[(count($folder_parts) - 2)])) {
+                    $parent = implode($delim, array_slice($folder_parts, 0, -1));
+                    if ($parent.$delim == $namespace) {
+                        $parent = '';
+                    }
+                }
+
+                /* build properties from the flags string */
+                if (stristr($flags, 'marked')) { 
+                    $marked = true;
+                }
+                if (stristr($flags, 'noinferiors')) { 
+                    $can_have_kids = false;
+                }
+                if (($folder == $namespace && $namespace) || stristr($flags, 'haschildren')) { 
+                    $has_kids = true;
+                }
+                if ($folder != 'INBOX' && $folder != $namespace && stristr($flags, 'noselect')) { 
+                    $no_select = true;
+                }
+
+                /* store the results in the big folder list struct */
+                $folders[$folder] = array('parent' => $parent, 'delim' => $delim, 'name' => $folder,
+                                        'name_parts' => $folder_parts, 'basename' => $base_name,
+                                        'realname' => $folder, 'namespace' => $namespace, 'marked' => $marked,
+                                        'noselect' => $no_select, 'can_have_kids' => $can_have_kids,
+                                        'has_kids' => $has_kids);
+
+                /* store a parent list used below */
+                if ($parent && !in_array($parent, $parents)) {
+                    $parents[$parent][] = $folders[$folder];
+                }
+            }
+        }
+
+        /* attempt to fix broken hierarchy issues. If a parent folder was not found fabricate
+         * it in the folder list */
+        $place_holders = array();
+        foreach ($parents as $val => $parent_list) {
+            foreach ($parent_list as $parent) {
+                $found = false;
+                foreach ($folders as $i => $vals) {
+                    if ($vals['name'] == $val) {
+                        $folders[$i]['has_kids'] = 1;
+                        $found = true;
+                        break;
+                    }
+                }
+                if (!$found) {
+                    if (count($parent['name_parts']) > 1) {
+                        foreach ($parent['name_parts'] as $i => $v) {
+                            $fname = implode($delim, array_slice($parent['name_parts'], 0, ($i + 1)));
+                            $name_parts = array_slice($parent['name_parts'], 0, ($i + 1));
+                            if (!isset($folders[$fname])) {
+                                $freal = $v;
+                                if ($i > 0) {
+                                    $fparent = implode($delim, array_slice($parent['name_parts'], 0, $i));
+                                }
+                                else {
+                                    $fparent = false;
+                                }
+                                $place_holders[] = $fname;
+                                $folders[$fname] = array('parent' => $fparent, 'delim' => $delim, 'name' => $freal,
+                                    'name_parts' => $name_parts, 'basename' => $freal, 'realname' => $fname,
+                                    'namespace' => $namespace, 'marked' => false, 'noselect' => true,
+                                    'can_have_kids' => true, 'has_kids' => true);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /* ALL account need an inbox. If we did not find one manually add it to the results */
+        if (!isset($folders['INBOX'])) {
+            $folders = array_merge(array('INBOX' => array(
+                    'name' => 'INBOX', 'basename' => 'INBOX', 'realname' => 'INBOX', 'noselect' => false,
+                    'parent' => false, 'has_kids' => false, )), $folders);
+        }
+
+        /* sort and return the list */
+        ksort($folders);
+        return $this->cache_return_val($folders, $cache_command);
+    }
+
+    /**
+     * get IMAP folder namespaces
+     *
+     * @return array list of available namespace details
+     */
+    public function get_namespaces() {
+        if (!$this->is_supported('NAMESPACE')) {
+            return array(array(
+                'prefix' => $this->default_prefix,
+                'delim' => $this->default_delimiter,
+                'class' => 'personal'
+            ));
+        }
+        $data = array();
+        $command = "NAMESPACE\r\n";
+        $cache = $this->check_cache($command);
+        if ($cache) {
+            return $cache;
+        }
+        $this->send_command("NAMESPACE\r\n");
+        $res = $this->get_response();
+        $this->namespace_count = 0;
+        $status = $this->check_response($res);
+        if ($status) {
+            if (preg_match("/\* namespace (\(.+\)|NIL) (\(.+\)|NIL) (\(.+\)|NIL)/i", $res[0], $matches)) {
+                $classes = array(1 => 'personal', 2 => 'other_users', 3 => 'shared');
+                foreach ($classes as $i => $v) {
+                    if (trim(strtoupper($matches[$i])) == 'NIL') {
+                        continue;
+                    }
+                    $list = str_replace(') (', '),(', substr($matches[$i], 1, -1));
+                    $prefix = '';
+                    $delim = '';
+                    foreach (explode(',', $list) as $val) {
+                        $val = trim($val, ")(\r\n ");
+                        if (strlen($val) == 1) {
+                            $delim = $val;
+                            $prefix = '';
+                        }
+                        else {
+                            $delim = substr($val, -1);
+                            $prefix = trim(substr($val, 0, -1));
+                        }
+                        $this->namespace_count++;
+                        $data[] = array('delim' => $delim, 'prefix' => $prefix, 'class' => $v);
+                    }
+                }
+            }
+            return $this->cache_return_val($data, $command);
+        }
+        return $data;
+    }
+
+    /**
+     * select a mailbox
+     *
+     * @param $mailbox string the mailbox to attempt to select
+     *
+     * @return array list of information about the selected mailbox
+     */
+    public function select_mailbox($mailbox) {
+        $box = $this->utf7_encode(str_replace('"', '\"', $mailbox));
+        if (!$this->is_clean($box, 'mailbox')) {
+            return false;
+        }
+        if (!$this->read_only) {
+            $command = "SELECT \"$box\"";
+        }
+        else {
+            $command = "EXAMINE \"$box\"";
+        }
+        if ($this->is_supported('QRESYNC')) {
+            $command .= $this->build_qresync_params();
+        }
+        elseif ($this->is_supported('CONDSTORE')) {
+            $command .= ' (CONDSTORE)';
+        }
+        $this->send_command($command."\r\n");
+        $res = $this->get_response(false, true);
+        $status = $this->check_response($res, true);
+        $result = array();
+        if ($status) {
+            list($qresync, $attributes) = $this->parse_untagged_responses($res);
+            if (!$qresync) {
+                $this->check_mailbox_state_change($attributes);
+            }
+            else {
+                $this->debug[] = sprintf('Cache bust avoided on %s with QRESYNC!', $this->selected_mailbox['name']);
+            }
+            $result = array(
+                'selected' => $status,
+                'uidvalidity' => $attributes['uidvalidity'],
+                'exists' => $attributes['exists'],
+                'first_unseen' => $attributes['unseen'],
+                'uidnext' => $attributes['uidnext'],
+                'flags' => $attributes['flags'],
+                'permanentflags' => $attributes['pflags'],
+                'recent' => $attributes['recent'],
+                'nomodseq' => $attributes['nomodseq'],
+                'modseq' => $attributes['modseq'],
+            );
+            $this->state = 'selected';
+            $this->selected_mailbox = array('name' => $box, 'detail' => $result);
+        }
+        return $result;
+    }
+
+    /**
      * use IMAP NOOP to poll for untagged server messages
      *
      * @return array list of properties that have changed since SELECT
@@ -1643,77 +2026,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
             }
         }
         return $result;
-    }
-
-    /**
-     * attempt enable IMAP COMPRESS extension
-     * TODO: currently does not work ...
-     *
-     * @return void
-     */
-    public function enable_compression() {
-        if ($this->is_supported('COMPRESS=DEFLATE')) {
-            $this->send_command("COMPRESS DEFLATE\r\n");
-            $res = $this->get_response(false, true);
-            if ($this->check_response($res, true)) {
-                //stream_filter_prepend($this->handle, 'zlib.inflate', STREAM_FILTER_READ);
-                //stream_filter_append($this->handle, 'zlib.deflate', STREAM_FILTER_WRITE, 6);
-                $this->debug[] = 'DEFLATE compression extension activated';
-            }
-        }
-    }
-
-    /**
-     * connect to the imap server
-     *
-     * @param $config array list of configuration options for this connections
-     *
-     * @return bool true on connection sucess
-     */
-    public function connect( $config ) {
-        if (isset($config['username']) && isset($config['password'])) {
-            $this->commands = array();
-            $this->debug = array();
-            $this->capability = false;
-            $this->responses = array();
-            $this->current_command = false;
-            $this->apply_config($config);
-            if ($this->tls) {
-                $this->server = 'tls://'.$this->server;
-            } 
-            $this->debug[] = 'Connecting to '.$this->server.' on port '.$this->port;
-            $this->handle = @fsockopen($this->server, $this->port, $errorno, $errorstr, 30);
-            if (is_resource($this->handle)) {
-                $this->debug[] = 'Successfully opened port to the IMAP server';
-                $this->state = 'connected';
-                return $this->authenticate($config['username'], $config['password']);
-            }
-            else {
-                $this->debug[] = 'Could not connect to the IMAP server';
-                $this->debug[] = 'fsockopen errors #'.$errorno.'. '.$errorstr;
-                return false;
-            }
-        }
-        else {
-            $this->debug[] = 'username and password must be set in the connect() config argument';
-            return false;
-        }
-    }
-
-    /**
-     * close the IMAP connection
-     *
-     * @return void
-     */
-    public function disconnect() {
-        $command = "LOGOUT\r\n";
-        $this->state = 'disconnected';
-        $this->selected_mailbox = false;
-        $this->send_command($command);
-        $result = $this->get_response();
-        if (is_resource($this->handle)) {
-            fclose($this->handle);
-        }
     }
 
     /**
@@ -1875,6 +2187,67 @@ class Hm_IMAP extends Hm_IMAP_Cache {
             return $this->cache_return_val($struct, $command);
         }
         return $struct;
+    }
+
+    /**
+     * return a flat list of message parts and IMAP part numbers
+     * from a nested BODYSTRUCTURE response
+     *
+     * @param $struct array nested BODYSTRUCTURE response
+     * 
+     * @return array list of message part details
+     */
+    public function flatten_bodystructure($struct, $res=array()) {
+        foreach($struct as $id => $vals) {
+            if(isset($vals['subtype']) && isset($vals['type'])) {
+                $res[$id] = $vals['type'].'/'.$vals['subtype'];
+            }
+            if(isset($vals['subs'])) {
+                $res = $this->flatten_bodystructure($vals['subs'], $res);
+            }
+        }
+        return $res;
+    }
+
+    /**
+     * search a nested BODYSTRUCTURE response for a specific part
+     *
+     * @param $struct array the structure to search
+     * @param $search_term string the search term
+     * @param $search_flds array list of fields to search for the term
+     *
+     * @return array array of all matching parts from the message
+     */
+    public function search_bodystructure($struct, $search_flds, $all=true, $res=array()) {
+        foreach ($struct as $id => $vals) {
+            if (!is_array($vals)) {
+                continue;
+            }
+            $match_count = count($search_flds);
+            $matches = 0;
+            if (isset($search_flds['imap_part_number']) && $id == $search_flds['imap_part_number']) {
+                $matches++;
+            }
+            foreach ($vals as $name => $val) {
+                if ($name == 'subs') {
+                    $res = $this->search_bodystructure($val, $search_flds, $all, $res);
+                }
+                elseif (isset($search_flds[$name]) && stristr($val, $search_flds[$name])) {
+                    $matches++;
+                }
+            }
+            if ($matches == $match_count) {
+                $part = $vals;
+                if (isset($part['subs'])) {
+                    $part['subs'] = count($part['subs']);
+                }
+                $res[$id] = $part;
+                if (!$all) {
+                    return $res;
+                }
+            }
+        }
+        return $res;
     }
 
     /**
@@ -2167,247 +2540,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
-     * get a list of mailbox folders
-     *
-     * @param $lsub bool flag to limit results to subscribed folders only
-     *
-     * @return array associative array of folder details
-     */
-    public function get_mailbox_list($lsub=false, $mailbox='', $keyword='*') {
-        /* possibly limit list response to subscribed folders only */
-
-        /* defaults */
-        $folders = array();
-        $excluded = array();
-        $parents = array();
-        $delim = false;
-        $commands = $this->build_list_commands($lsub, $mailbox, $keyword);
-        $cache_command = implode('', array_map(function($v) { return $v[0]; }, $commands)).(string)$mailbox.(string)$keyword;
-        $cache = $this->check_cache($cache_command);
-        if ($cache) {
-            return $cache;
-        }
-
-        foreach($commands as $vals) {
-            $command = $vals[0];
-            $namespace = $vals[1];
-
-            $this->send_command($command);
-            $result = $this->get_response($this->folder_max, true);
-
-            /* loop through the "parsed" response. Each iteration is one folder */
-            foreach ($result as $vals) {
-
-                /* break at the end of the list */
-                if (!isset($vals[0]) || $vals[0] == 'A'.$this->command_count) {
-                    continue;
-                }
-
-                /* defaults */
-                $flags = false;
-                $flag = false;
-                $delim_flag = false;
-                $parent = '';
-                $base_name = '';
-                $folder_parts = array();
-                $no_select = false;
-                $can_have_kids = true;
-                $has_kids = false;
-                $marked = false;
-                $folder_sort_by = 'ARRIVAL';
-                $check_for_new = false;
-
-                /* full folder name, includes an absolute path of parent folders */
-                $folder = $this->utf7_decode($vals[(count($vals) - 1)]);
-
-                /* sometimes LIST responses have dupes */
-                if (isset($folders[$folder]) || !$folder) {
-                    continue;
-                }
-
-                /* folder flags */
-                foreach ($vals as $v) {
-                    if ($v == '(') {
-                        $flag = true;
-                    }
-                    elseif ($v == ')') {
-                        $flag = false;
-                        $delim_flag = true;
-                    }
-                    else {
-                        if ($flag) {
-                            $flags .= ' '.$v;
-                        }
-                        if ($delim_flag && !$delim) {
-                            $delim = $v;
-                            $delim_flag = false;
-                        }
-                    }
-                }
-
-                /* get each folder name part of the complete hierarchy */
-                $folder_parts = array();
-                if ($delim && strstr($folder, $delim)) {
-                    $temp_parts = explode($delim, $folder);
-                    foreach ($temp_parts as $g) {
-                        if (trim($g)) {
-                            $folder_parts[] = $g;
-                        }
-                    }
-                }
-                else {
-                    $folder_parts[] = $folder;
-                }
-
-                /* get the basename part of the folder name. For a folder named "inbox.sent.march"
-                 * with a delimiter of "." the basename would be "march" */
-                if (isset($folder_parts[(count($folder_parts) - 1)])) {
-                    $base_name = $folder_parts[(count($folder_parts) - 1)];
-                }
-                else {
-                    $base_name = $folder;
-                }
-
-                /* determine the parent folder basename if it exists */
-                if (isset($folder_parts[(count($folder_parts) - 2)])) {
-                    $parent = implode($delim, array_slice($folder_parts, 0, -1));
-                    if ($parent.$delim == $namespace) {
-                        $parent = '';
-                    }
-                }
-
-                /* build properties from the flags string */
-                if (stristr($flags, 'marked')) { 
-                    $marked = true;
-                }
-                if (stristr($flags, 'noinferiors')) { 
-                    $can_have_kids = false;
-                }
-                if (($folder == $namespace && $namespace) || stristr($flags, 'haschildren')) { 
-                    $has_kids = true;
-                }
-                if ($folder != 'INBOX' && $folder != $namespace && stristr($flags, 'noselect')) { 
-                    $no_select = true;
-                }
-
-                /* store the results in the big folder list struct */
-                $folders[$folder] = array('parent' => $parent, 'delim' => $delim, 'name' => $folder,
-                                        'name_parts' => $folder_parts, 'basename' => $base_name,
-                                        'realname' => $folder, 'namespace' => $namespace, 'marked' => $marked,
-                                        'noselect' => $no_select, 'can_have_kids' => $can_have_kids,
-                                        'has_kids' => $has_kids);
-
-                /* store a parent list used below */
-                if ($parent && !in_array($parent, $parents)) {
-                    $parents[$parent][] = $folders[$folder];
-                }
-            }
-        }
-
-        /* attempt to fix broken hierarchy issues. If a parent folder was not found fabricate
-         * it in the folder list */
-        $place_holders = array();
-        foreach ($parents as $val => $parent_list) {
-            foreach ($parent_list as $parent) {
-                $found = false;
-                foreach ($folders as $i => $vals) {
-                    if ($vals['name'] == $val) {
-                        $folders[$i]['has_kids'] = 1;
-                        $found = true;
-                        break;
-                    }
-                }
-                if (!$found) {
-                    if (count($parent['name_parts']) > 1) {
-                        foreach ($parent['name_parts'] as $i => $v) {
-                            $fname = implode($delim, array_slice($parent['name_parts'], 0, ($i + 1)));
-                            $name_parts = array_slice($parent['name_parts'], 0, ($i + 1));
-                            if (!isset($folders[$fname])) {
-                                $freal = $v;
-                                if ($i > 0) {
-                                    $fparent = implode($delim, array_slice($parent['name_parts'], 0, $i));
-                                }
-                                else {
-                                    $fparent = false;
-                                }
-                                $place_holders[] = $fname;
-                                $folders[$fname] = array('parent' => $fparent, 'delim' => $delim, 'name' => $freal,
-                                    'name_parts' => $name_parts, 'basename' => $freal, 'realname' => $fname,
-                                    'namespace' => $namespace, 'marked' => false, 'noselect' => true,
-                                    'can_have_kids' => true, 'has_kids' => true);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        /* ALL account need an inbox. If we did not find one manually add it to the results */
-        if (!isset($folders['INBOX'])) {
-            $folders = array_merge(array('INBOX' => array(
-                    'name' => 'INBOX', 'basename' => 'INBOX', 'realname' => 'INBOX', 'noselect' => false,
-                    'parent' => false, 'has_kids' => false, )), $folders);
-        }
-
-        /* sort and return the list */
-        ksort($folders);
-        return $this->cache_return_val($folders, $cache_command);
-    }
-
-    /**
-     * get IMAP folder namespaces
-     *
-     * @return array list of available namespace details
-     */
-    public function get_namespaces() {
-        if (!$this->is_supported('NAMESPACE')) {
-            return array(array(
-                'prefix' => $this->default_prefix,
-                'delim' => $this->default_delimiter,
-                'class' => 'personal'
-            ));
-        }
-        $data = array();
-        $command = "NAMESPACE\r\n";
-        $cache = $this->check_cache($command);
-        if ($cache) {
-            return $cache;
-        }
-        $this->send_command("NAMESPACE\r\n");
-        $res = $this->get_response();
-        $this->namespace_count = 0;
-        $status = $this->check_response($res);
-        if ($status) {
-            if (preg_match("/\* namespace (\(.+\)|NIL) (\(.+\)|NIL) (\(.+\)|NIL)/i", $res[0], $matches)) {
-                $classes = array(1 => 'personal', 2 => 'other_users', 3 => 'shared');
-                foreach ($classes as $i => $v) {
-                    if (trim(strtoupper($matches[$i])) == 'NIL') {
-                        continue;
-                    }
-                    $list = str_replace(') (', '),(', substr($matches[$i], 1, -1));
-                    $prefix = '';
-                    $delim = '';
-                    foreach (explode(',', $list) as $val) {
-                        $val = trim($val, ")(\r\n ");
-                        if (strlen($val) == 1) {
-                            $delim = $val;
-                            $prefix = '';
-                        }
-                        else {
-                            $delim = substr($val, -1);
-                            $prefix = trim(substr($val, 0, -1));
-                        }
-                        $this->namespace_count++;
-                        $data[] = array('delim' => $delim, 'prefix' => $prefix, 'class' => $v);
-                    }
-                }
-            }
-            return $this->cache_return_val($data, $command);
-        }
-        return $data;
-    }
-
-    /**
      * start streaming a message part. returns the number of characters in the message
      *
      * @param $uid int IMAP message UID
@@ -2471,280 +2603,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         return $res;
     }
-
-    /**
-     * delete an existing mailbox
-     *
-     * @param $mailbox string IMAP mailbox name to delete
-     * 
-     * @return bool tru if the mailbox was deleted
-     */
-    public function delete_mailbox($mailbox) {
-        if (!$this->is_clean($mailbox, 'mailbox')) {
-            return false;
-        }
-        if ($this->read_only) {
-            $this->debug[] = 'Delete mailbox not permitted in read only mode';
-            return false;
-        }
-        $command = 'DELETE "'.str_replace('"', '\"', $this->utf7_encode($mailbox))."\"\r\n";
-        $this->send_command($command);
-        $result = $this->get_response(false);
-        $status = $this->check_response($result, false);
-        if ($status) {
-            return true;
-        }
-        else {
-            $this->debug[] = str_replace('A'.$this->command_count, '', $result[0]);
-            return false;
-        }
-    }
-
-    /**
-     * rename and existing mailbox
-     *
-     * @param $mailbox string IMAP mailbox to rename
-     * @param $new_mailbox string new name for the mailbox
-     *
-     * @return bool true if the rename operation worked
-     */
-    public function rename_mailbox($mailbox, $new_mailbox) {
-        if (!$this->is_clean($mailbox, 'mailbox') || !$this->is_clean($new_mailbox, 'mailbox')) {
-            return false;
-        }
-        if ($this->read_only) {
-            $this->debug[] = 'Rename mailbox not permitted in read only mode';
-            return false;
-        }
-        $command = 'RENAME "'.$this->utf7_encode($mailbox).'" "'.$this->utf7_encode($new_mailbox).'"'."\r\n";
-        $this->send_command($command);
-        $result = $this->get_response(false);
-        $status = $this->check_response($result, false);
-        if ($status) {
-            return true;
-        }
-        else {
-            $this->debug[] = str_replace('A'.$this->command_count, '', $result[0]);
-            return false;
-        }
-    } 
-
-    /**
-     * create a new mailbox
-     *
-     * @param $mailbox string IMAP mailbox name
-     *
-     * @return bool true if the mailbox was created
-     */
-    public function create_mailbox($mailbox) {
-        if (!$this->is_clean($mailbox, 'mailbox')) {
-            return false;
-        }
-        if ($this->read_only) {
-            $this->debug[] = 'Create mailbox not permitted in read only mode';
-            return false;
-        }
-        $command = 'CREATE "'.$this->utf7_encode($mailbox).'"'."\r\n";
-        $this->send_command($command);
-        $result = $this->get_response(false);
-        $status = $this->check_response($result, false);
-        if ($status) {
-            return true;
-        }
-        else {
-            $this->debug[] =  str_replace('A'.$this->command_count, '', $result[0]);
-            return false;
-        }
-    }
-
-    /**
-     * perform an IMAP action on a message
-     *
-     * @param $action string action to perform, can be one of READ, UNREAD, FLAG,
-     *                       UNFLAG, ANSWERED, DELETE, UNDELETE, EXPUNGE, or COPY
-     * @param $uids array/string an array of uids or a valid IMAP sequence set as a string
-     * @param $mailbox string destination IMAP mailbox name for operations the require one
-     */
-    public function message_action($action, $uids, $mailbox=false) {
-        $status = false;
-        $uid_strings = array();
-        if (is_array($uids)) {
-            if (count($uids) > 1000) {
-                while (count($uids) > 1000) { 
-                    $uid_strings[] = implode(',', array_splice($uids, 0, 1000));
-                }
-                if (count($uids)) {
-                    $uid_strings[] = implode(',', $uids);
-                }
-            }
-            else {
-                $uid_strings[] = implode(',', $uids);
-            }
-        }
-        else {
-            $uid_strings[] = $uids;
-        }
-        foreach ($uid_strings as $uid_string) {
-            if ($uid_string) {
-                if (!$this->is_clean($uid_string, 'uid_list')) {
-                    return false;
-                }
-            }
-            switch ($action) {
-                case 'READ':
-                    $command = "UID STORE $uid_string +FLAGS (\Seen)\r\n";
-                    break;
-                case 'FLAG':
-                    $command = "UID STORE $uid_string +FLAGS (\Flagged)\r\n";
-                    break;
-                case 'UNFLAG':
-                    $command = "UID STORE $uid_string -FLAGS (\Flagged)\r\n";
-                    break;
-                case 'ANSWERED':
-                    $command = "UID STORE $uid_string +FLAGS (\Answered)\r\n";
-                    break;
-                case 'UNREAD':
-                    $command = "UID STORE $uid_string -FLAGS (\Seen)\r\n";
-                    break;
-                case 'DELETE':
-                    $command = "UID STORE $uid_string +FLAGS (\Deleted)\r\n";
-                    break;
-                case 'UNDELETE':
-                    $command = "UID STORE $uid_string -FLAGS (\Deleted)\r\n";
-                    break;
-                case 'EXPUNGE':
-                    $command = "EXPUNGE\r\n";
-                    break;
-                case 'COPY':
-                    if (!$this->is_clean($mailbox, 'mailbox')) {
-                        return false;
-                    }
-                    $command = "UID COPY $uid_string \"".$this->utf7_encode($mailbox)."\"\r\n";
-                    break;
-                case 'MOVE':
-                    if ($this->is_supported('MOVE')) {
-                        if (!$this->is_clean($mailbox, 'mailbox')) {
-                            return false;
-                        }
-                        $command = "UID MOVE $uid_string \"".$this->utf7_encode($mailbox)."\"\r\n";
-                    }
-                    break;
-            }
-            if ($command) {
-                $this->send_command($command);
-                $res = $this->get_response();
-                $status = $this->check_response($res);
-            }
-            if ($status) {
-                $this->bust_cache( $this->selected_mailbox['name'] );
-                if ($mailbox) {
-                    $this->bust_cache($mailbox);
-                }
-            }
-        }
-        return $status;
-    }
-
-    /**
-     * returns current IMAP state
-     *
-     * @return string one of:
-     *                disconnected  = no IMAP server TCP connection
-     *                connected     = an IMAP server TCP connection exists
-     *                authenticated = successfully authenticated to the IMAP server
-     *                selected      = a mailbox has been selected
-     */
-    public function get_state() {
-        return $this->state;
-    }
-
-    /**
-     * return a flat list of message parts and IMAP part numbers
-     * from a nested BODYSTRUCTURE response
-     *
-     * @param $struct array nested BODYSTRUCTURE response
-     * 
-     * @return array list of message part details
-     */
-    public function flatten_bodystructure($struct, $res=array()) {
-        foreach($struct as $id => $vals) {
-            if(isset($vals['subtype']) && isset($vals['type'])) {
-                $res[$id] = $vals['type'].'/'.$vals['subtype'];
-            }
-            if(isset($vals['subs'])) {
-                $res = $this->flatten_bodystructure($vals['subs'], $res);
-            }
-        }
-        return $res;
-    }
-
-    /**
-     * search a nested BODYSTRUCTURE response for a specific part
-     *
-     * @param $struct array the structure to search
-     * @param $search_term string the search term
-     * @param $search_flds array list of fields to search for the term
-     *
-     * @return array array of all matching parts from the message
-     */
-    public function search_bodystructure($struct, $search_flds, $all=true, $res=array()) {
-        foreach ($struct as $id => $vals) {
-            if (!is_array($vals)) {
-                continue;
-            }
-            $match_count = count($search_flds);
-            $matches = 0;
-            if (isset($search_flds['imap_part_number']) && $id == $search_flds['imap_part_number']) {
-                $matches++;
-            }
-            foreach ($vals as $name => $val) {
-                if ($name == 'subs') {
-                    $res = $this->search_bodystructure($val, $search_flds, $all, $res);
-                }
-                elseif (isset($search_flds[$name]) && stristr($val, $search_flds[$name])) {
-                    $matches++;
-                }
-            }
-            if ($matches == $match_count) {
-                $part = $vals;
-                if (isset($part['subs'])) {
-                    $part['subs'] = count($part['subs']);
-                }
-                $res[$id] = $part;
-                if (!$all) {
-                    return $res;
-                }
-            }
-        }
-        return $res;
-    }
-
-    /**
-     * decode mail fields to human readable text
-     *
-     * @param $string string field to decode
-     *
-     * @return string decoded field
-     */
-    public function decode_fld($string) {
-        if (preg_match_all("/(=\?[^\?]+\?(q|b)\?[^\?]+\?=)/i", $string, $matches)) {
-            foreach ($matches[1] as $v) {
-                $fld = substr($v, 2, -2);
-                $charset = strtolower(substr($fld, 0, strpos($fld, '?')));
-                $fld = substr($fld, (strlen($charset) + 1));
-                $encoding = $fld{0};
-                $fld = substr($fld, (strpos($fld, '?') + 1));
-                if (strtoupper($encoding) == 'B') {
-                    $fld = mb_convert_encoding(base64_decode($fld), 'UTF-8', $charset);
-                }
-                elseif (strtoupper($encoding) == 'Q') {
-                    $fld = mb_convert_encoding(quoted_printable_decode($fld), 'UTF-8', $charset);
-                }
-                $string = str_replace($v, $fld, $string);
-            }
-        }
-        return trim($string);
-    } 
 
     /**
      * return the formatted message content of the first part that matches the supplied MIME type
@@ -2950,33 +2808,176 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
-     * use the ENABLE extension to tell the IMAP server what extensions we support
+     * delete an existing mailbox
      *
-     * @return void
+     * @param $mailbox string IMAP mailbox name to delete
+     * 
+     * @return bool tru if the mailbox was deleted
      */
-    public function enable() {
-        $extensions = array();
-        if ($this->is_supported('ENABLE')) {
-            if ($this->is_supported('QRESYNC')) {
-                $extension_string = implode(' ', array_filter($this->client_extensions, function($val) { return $val != 'CONDSTORE'; }));
-            }
-            else {
-                $extension_string = implode(' ', $this->client_extensions);
-            }
-            $command = 'ENABLE '.$extension_string."\r\n";
-            $this->send_command($command);
-            $res = $this->get_response(false, true);
-            if ($this->check_response($res, true)) {
-                foreach($res as $vals) {
-                    if (in_array('ENABLED', $vals)) {
-                        $extensions[] = $this->get_adjacent_response_value($vals, -1, 'ENABLED');
-                    }
+    public function delete_mailbox($mailbox) {
+        if (!$this->is_clean($mailbox, 'mailbox')) {
+            return false;
+        }
+        if ($this->read_only) {
+            $this->debug[] = 'Delete mailbox not permitted in read only mode';
+            return false;
+        }
+        $command = 'DELETE "'.str_replace('"', '\"', $this->utf7_encode($mailbox))."\"\r\n";
+        $this->send_command($command);
+        $result = $this->get_response(false);
+        $status = $this->check_response($result, false);
+        if ($status) {
+            return true;
+        }
+        else {
+            $this->debug[] = str_replace('A'.$this->command_count, '', $result[0]);
+            return false;
+        }
+    }
+
+    /**
+     * rename and existing mailbox
+     *
+     * @param $mailbox string IMAP mailbox to rename
+     * @param $new_mailbox string new name for the mailbox
+     *
+     * @return bool true if the rename operation worked
+     */
+    public function rename_mailbox($mailbox, $new_mailbox) {
+        if (!$this->is_clean($mailbox, 'mailbox') || !$this->is_clean($new_mailbox, 'mailbox')) {
+            return false;
+        }
+        if ($this->read_only) {
+            $this->debug[] = 'Rename mailbox not permitted in read only mode';
+            return false;
+        }
+        $command = 'RENAME "'.$this->utf7_encode($mailbox).'" "'.$this->utf7_encode($new_mailbox).'"'."\r\n";
+        $this->send_command($command);
+        $result = $this->get_response(false);
+        $status = $this->check_response($result, false);
+        if ($status) {
+            return true;
+        }
+        else {
+            $this->debug[] = str_replace('A'.$this->command_count, '', $result[0]);
+            return false;
+        }
+    } 
+
+    /**
+     * create a new mailbox
+     *
+     * @param $mailbox string IMAP mailbox name
+     *
+     * @return bool true if the mailbox was created
+     */
+    public function create_mailbox($mailbox) {
+        if (!$this->is_clean($mailbox, 'mailbox')) {
+            return false;
+        }
+        if ($this->read_only) {
+            $this->debug[] = 'Create mailbox not permitted in read only mode';
+            return false;
+        }
+        $command = 'CREATE "'.$this->utf7_encode($mailbox).'"'."\r\n";
+        $this->send_command($command);
+        $result = $this->get_response(false);
+        $status = $this->check_response($result, false);
+        if ($status) {
+            return true;
+        }
+        else {
+            $this->debug[] =  str_replace('A'.$this->command_count, '', $result[0]);
+            return false;
+        }
+    }
+
+    /**
+     * perform an IMAP action on a message
+     *
+     * @param $action string action to perform, can be one of READ, UNREAD, FLAG,
+     *                       UNFLAG, ANSWERED, DELETE, UNDELETE, EXPUNGE, or COPY
+     * @param $uids array/string an array of uids or a valid IMAP sequence set as a string
+     * @param $mailbox string destination IMAP mailbox name for operations the require one
+     */
+    public function message_action($action, $uids, $mailbox=false) {
+        $status = false;
+        $uid_strings = array();
+        if (is_array($uids)) {
+            if (count($uids) > 1000) {
+                while (count($uids) > 1000) { 
+                    $uid_strings[] = implode(',', array_splice($uids, 0, 1000));
+                }
+                if (count($uids)) {
+                    $uid_strings[] = implode(',', $uids);
                 }
             }
-            $this->enabled_extensions = $extensions;
-            $this->debug[] = sprintf("Enabled extensions: ".implode(', ', $extensions));
+            else {
+                $uid_strings[] = implode(',', $uids);
+            }
         }
-        return $extensions;
+        else {
+            $uid_strings[] = $uids;
+        }
+        foreach ($uid_strings as $uid_string) {
+            if ($uid_string) {
+                if (!$this->is_clean($uid_string, 'uid_list')) {
+                    return false;
+                }
+            }
+            switch ($action) {
+                case 'READ':
+                    $command = "UID STORE $uid_string +FLAGS (\Seen)\r\n";
+                    break;
+                case 'FLAG':
+                    $command = "UID STORE $uid_string +FLAGS (\Flagged)\r\n";
+                    break;
+                case 'UNFLAG':
+                    $command = "UID STORE $uid_string -FLAGS (\Flagged)\r\n";
+                    break;
+                case 'ANSWERED':
+                    $command = "UID STORE $uid_string +FLAGS (\Answered)\r\n";
+                    break;
+                case 'UNREAD':
+                    $command = "UID STORE $uid_string -FLAGS (\Seen)\r\n";
+                    break;
+                case 'DELETE':
+                    $command = "UID STORE $uid_string +FLAGS (\Deleted)\r\n";
+                    break;
+                case 'UNDELETE':
+                    $command = "UID STORE $uid_string -FLAGS (\Deleted)\r\n";
+                    break;
+                case 'EXPUNGE':
+                    $command = "EXPUNGE\r\n";
+                    break;
+                case 'COPY':
+                    if (!$this->is_clean($mailbox, 'mailbox')) {
+                        return false;
+                    }
+                    $command = "UID COPY $uid_string \"".$this->utf7_encode($mailbox)."\"\r\n";
+                    break;
+                case 'MOVE':
+                    if ($this->is_supported('MOVE')) {
+                        if (!$this->is_clean($mailbox, 'mailbox')) {
+                            return false;
+                        }
+                        $command = "UID MOVE $uid_string \"".$this->utf7_encode($mailbox)."\"\r\n";
+                    }
+                    break;
+            }
+            if ($command) {
+                $this->send_command($command);
+                $res = $this->get_response();
+                $status = $this->check_response($res);
+            }
+            if ($status) {
+                $this->bust_cache( $this->selected_mailbox['name'] );
+                if ($mailbox) {
+                    $this->bust_cache($mailbox);
+                }
+            }
+        }
+        return $status;
     }
 
 }
