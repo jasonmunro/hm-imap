@@ -3018,6 +3018,62 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         return $status;
     }
 
+    public function get_mailbox_status($mailbox, $args=array('UNSEEN', 'UIDVALIDITY', 'UIDNEXT', 'MESSAGES', 'RECENT')) {
+        $command = 'STATUS "'.$this->utf7_encode($mailbox).'" ('.implode(' ', $args).")\r\n";
+        $this->send_command($command);
+        $response = $this->get_response(false, true);
+        $attributes = array(
+            'messages' => false,
+            'uidvalidity' => false,
+            'uidnext' => false,
+            'recent' => false,
+            'unseen' => false
+        );
+        if ($this->check_response($response, true)) {
+            foreach ($response as $vals) {
+                if (in_array('MESSAGES', $vals)) {
+                    $res = $this->get_adjacent_response_value($vals, -1, 'MESSAGES');
+                    if (ctype_digit((string)$res)) {
+                        $attributes['messages'] = $this->get_adjacent_response_value($vals, -1, 'MESSAGES');
+                    }
+                }
+                if (in_array('UIDNEXT', $vals)) {
+                    $res = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
+                    if (ctype_digit((string)$res)) {
+                        $attributes['uidnext'] = $this->get_adjacent_response_value($vals, -1, 'UIDNEXT');
+                    }
+                }
+                if (in_array('UIDVALIDITY', $vals)) {
+                    $res = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
+                    if (ctype_digit((string)$res)) {
+                        $attributes['uidvalidity'] = $this->get_adjacent_response_value($vals, -1, 'UIDVALIDITY');
+                    }
+                }
+                if (in_array('RECENT', $vals)) {
+                    $res = $this->get_adjacent_response_value($vals, -1, 'RECENT');
+                    if (ctype_digit((string)$res)) {
+                        $attributes['recent'] = $this->get_adjacent_response_value($vals, -1, 'RECENT');
+                    }
+                }
+                if (in_array('UNSEEN', $vals)) {
+                    $res = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
+                    if (ctype_digit((string)$res)) {
+                        $attributes['unseen'] = $this->get_adjacent_response_value($vals, -1, 'UNSEEN');
+                    }
+                }
+            }
+        }
+        /* check cache here */
+        return $attributes;
+    }
+
 }
 
+/*
+ * TODO:
+ * UNSELECT extension support
+ * LIST-STATUS support
+ * CREATE-SPECIAL-USE support
+ * LOGINDISABLED / STARTTLS support
+ */
 ?>
