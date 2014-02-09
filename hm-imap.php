@@ -1279,7 +1279,10 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if ($status) {
             list($qresync, $attributes) = $this->parse_untagged_responses($res);
             if (!$qresync) {
-                /* TODO: check/bust cache */
+                $this->check_mailbox_state_change($attributes);
+            }
+            else {
+                $this->debug[] = sprintf('Cache bust avoided on %s with QRESYNC!', $this->selected_mailbox['name']);
             }
             $result = array(
                 'selected' => $status,
@@ -1494,6 +1497,24 @@ class Hm_IMAP extends Hm_IMAP_Parser {
      *
      * @return array list of properties that have changed since SELECT
      */
+    private function check_mailbox_state_change($attributes) {
+        if (!$this->selected_mailbox) {
+            return;
+        }
+        $state_changed = false;
+        foreach($attributes as $name => $value) {
+            if ($value !== false) {
+                if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
+                    $state_changed = true;
+                    $this->selected_mailbox['detail'][$name] = $value;
+                    $result[ $name ] = $value;
+                }
+            }
+        }
+        if ($state_changed || $attributes['nomodseq']) {
+            $this->bust_cache($this->selected_mailbox['name']);
+        }
+    }
     public function poll() {
         $result = array();
         $command = "NOOP\r\n";
@@ -1502,19 +1523,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
         if ($this->check_response($res, true)) {
             list($qresync, $attributes) = $this->parse_untagged_responses($res);
             if (!$qresync) {
-                $state_changed = false;
-                foreach($attributes as $name => $value) {
-                    if ($value !== false) {
-                        if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
-                            $state_changed = true;
-                            $this->selected_mailbox['detail'][$name] = $value;
-                            $result[ $name ] = $value;
-                        }
-                    }
-                }
-                if ($state_changed || $attributes['nomodseq']) {
-                    $this->bust_cache($this->selected_mailbox['name']);
-                }
+                $this->check_mailbox_state_change($attributes);
             }
             else {
                 $this->debug[] = sprintf('Cache bust avoided on %s with QRESYNC!', $this->selected_mailbox['name']);
