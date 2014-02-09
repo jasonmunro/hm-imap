@@ -334,7 +334,7 @@ class Hm_IMAP_Base {
 
             /* add line and parsed bits to result set */
             else {
-                $result[$n] = join(' ', $chunks);
+                $result[$n] = implode(' ', $chunks);
                 if ($chunked) {
                     $chunked_result[$c] = $chunks;
                 }
@@ -1287,7 +1287,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 'permanentflags' => $attributes['pflags'],
                 'recent' => $attributes['recent'],
                 'nomodseq' => $attributes['nomodseq'],
-                'modseq' => $attributes['modse'],
+                'modseq' => $attributes['modseq'],
             );
             $this->state = 'selected';
             $this->selected_mailbox = array('name' => $box, 'detail' => $result);
@@ -1401,8 +1401,44 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             if (in_array('FLAGS', $vals) && !in_array('MODSEQ', $vals)) {
                 $attributes['flags'] = $this->get_flag_values($vals);
             }
+            if (in_array('FETCH', $vals)) {
+                $this->update_cache_data($vals);
+            }
         }
         return $attributes;
+    }
+
+    /**
+     * update the cache untagged QRESYNC FETCH responses
+     *
+     * @param $data array low level parsed IMAP response segment
+     *
+     * @return void
+     */
+    private function update_cache_data($data) {
+        $flags = array();
+        $uid = $this->get_adjacent_response_value($data, -1, 'UID');
+        if ($this->is_clean($uid, 'uid')) {
+            $flag_start = array_search('FLAGS', $data);
+            if ($flag_start !== false) {
+                $flags = $this->get_flag_values(array_slice($data, $flag_start));
+            }
+        }
+        if ($uid) {
+            if (isset($this->cache_keys[$this->selected_mailbox['name']])) {
+                $key = $this->cache_keys[$this->selected_mailbox['name']];
+                if (isset($this->cache_data[$key])) {
+                    foreach ($this->cache_data[$key] as $command => $result) {
+                        if (strstr($command, 'UID FETCH')) {
+                            if (isset($result[$uid]['flags'])) {
+                                $this->cache_data[$key][$command][$uid]['flags'] = implode(' ', $flags);
+                                $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -1888,7 +1924,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 }
             }
             if (!empty($flags)) {
-                $headers[] = array('Flags', join(' ', $flags));
+                $headers[] = array('Flags', implode(' ', $flags));
             }
         }
         $results = array();
@@ -2090,7 +2126,7 @@ class Hm_IMAP extends Hm_IMAP_Parser {
 
                 /* determine the parent folder basename if it exists */
                 if (isset($folder_parts[(count($folder_parts) - 2)])) {
-                    $parent = join($delim, array_slice($folder_parts, 0, -1));
+                    $parent = implode($delim, array_slice($folder_parts, 0, -1));
                     if ($parent.$delim == $namespace) {
                         $parent = '';
                     }
@@ -2140,12 +2176,12 @@ class Hm_IMAP extends Hm_IMAP_Parser {
                 if (!$found) {
                     if (count($parent['name_parts']) > 1) {
                         foreach ($parent['name_parts'] as $i => $v) {
-                            $fname = join($delim, array_slice($parent['name_parts'], 0, ($i + 1)));
+                            $fname = implode($delim, array_slice($parent['name_parts'], 0, ($i + 1)));
                             $name_parts = array_slice($parent['name_parts'], 0, ($i + 1));
                             if (!isset($folders[$fname])) {
                                 $freal = $v;
                                 if ($i > 0) {
-                                    $fparent = join($delim, array_slice($parent['name_parts'], 0, $i));
+                                    $fparent = implode($delim, array_slice($parent['name_parts'], 0, $i));
                                 }
                                 else {
                                     $fparent = false;
