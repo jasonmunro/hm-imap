@@ -1493,9 +1493,11 @@ class Hm_IMAP extends Hm_IMAP_Parser {
     }
 
     /**
-     * use IMAP NOOP to poll for untagged server messages
+     * examine NOOP/SELECT/EXAMINE untagged responses to determine if the mailbox state changed
      *
-     * @return array list of properties that have changed since SELECT
+     * @param $attributes array list of attribute name/value pairs
+     *
+     * @return void
      */
     private function check_mailbox_state_change($attributes) {
         if (!$this->selected_mailbox) {
@@ -1515,6 +1517,12 @@ class Hm_IMAP extends Hm_IMAP_Parser {
             $this->bust_cache($this->selected_mailbox['name']);
         }
     }
+
+    /**
+     * use IMAP NOOP to poll for untagged server messages
+     *
+     * @return array list of properties that have changed since SELECT
+     */
     public function poll() {
         $result = array();
         $command = "NOOP\r\n";
