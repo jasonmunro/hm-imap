@@ -2330,8 +2330,12 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         if (!isset($result[0][4])) {
             $status = false;
         }
+        /* TODO: rework, this is pretty fragile */
         if ($status) {
-            if (strtoupper($result[0][4]) == 'UID')  {
+            if (strtoupper($result[0][6]) == 'MODSEQ')  {
+                $response = array_slice($result[0], 11, -1);
+            }
+            elseif (strtoupper($result[0][4]) == 'UID')  {
                 $response = array_slice($result[0], 7, -1);
             }
             else {
