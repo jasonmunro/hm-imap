@@ -3129,7 +3129,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return array list of server properties on success
      */
     public function id() {
-        $res = array();
+        $res = false;
         if ($this->is_supported('ID')) {
             $params = array(
                 'name' => $this->app_name,
@@ -3137,16 +3137,17 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                 'vendor' => $this->app_vendor,
                 'support-url' => $this->app_support_url,
             );
-            $param_str = '';
+            $param_parts = array();
             foreach ($params as $name => $value) {
-                $param_str .= '"'.$name.'" "'.$value.'"';
+                $param_parts[] = '"'.$name.'" "'.$value.'"';
             }
-            if ($param_str) {
-                $command = 'ID ('.$param_str.")\r\n";
+            if (!empty($param_parts)) {
+                $command = 'ID ('.implode(' ', $param_parts).")\r\n";
                 $this->send_command($command);
                 $result = $this->get_response(false, true);
-                if ($this->check_response($res, true)) {
-                    $res = $result;
+                if ($this->check_response($result, true)) {
+                    /* TODO: save any server id params */
+                    $res = true;
                 }
             }
         }
