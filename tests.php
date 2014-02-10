@@ -172,8 +172,11 @@ $imap->bust_cache( 'ALL' );
 $imap->load_cache( $cache );
 assert_equal( true, strlen($cache) > 0 );
 
-$imap->show_debug( false );
+$debug = $imap->show_debug( false, true );
+assert_equal( false, stristr( $debug, 'FAILED' ) );
+
 printf( "\nTests passed: %d\n\n", $passed );
+$imap->show_debug();
 
 /* helper function for test result checking */
 function assert_equal( $expected, $actual ) {
