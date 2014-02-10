@@ -143,6 +143,11 @@ if ( $imap->is_supported( 'NAMESPACE' ) ) {
     assert_equal( '/', $nspaces[0]['delim'] );
 }
 
+if ( $imap->is_supported( 'X-GM-EXT-1' ) ) {
+    $unread = $imap->google_search( 'in:unread' );
+    assert_equal( true, !empty( $unread ) );
+}
+
 $created = $imap->create_mailbox( 'test123456789' );
 assert_equal( true, $created );
 
