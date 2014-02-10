@@ -1854,19 +1854,14 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return void/string 
      */
     public function show_debug($full=false, $return=false) {
-        if ($return) {
-            $res = sprintf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
-            if ($full) {
-                $res .= sprintf("Response %s", print_r($this->responses, true));
-            }
-            return $res;
+        $res = sprintf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
+        if ($full) {
+            $res .= sprintf("Response %s", print_r($this->responses, true));
         }
-        else {
-            printf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
-            if ($full) {
-                printf("Response %s", print_r($this->responses, true));
-            }
+        if (!$return) {
+            echo $res;
         }
+        return $res;
     }
 
     /**
@@ -2223,8 +2218,11 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         if (!$this->is_clean($sorted_string, 'uid_list')) {
             return array();
         }
-        $command = 'UID FETCH '.$sorted_string.' (FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (SUBJECT FROM '.
-                   "DATE CONTENT-TYPE X-PRIORITY TO)])\r\n";
+        $command = 'UID FETCH '.$sorted_string.' (FLAGS INTERNALDATE RFC822.SIZE ';
+        if ($this->is_supported( 'X-GM-EXT-1' )) {
+            $command .= 'X-GM-MSGID X-GM-THRID ';
+        }
+        $command .= "BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE CONTENT-TYPE X-PRIORITY TO)])\r\n";
         $cache_command = $command.(string)$raw;
         $cache = $this->check_cache($cache_command);
         if ($cache) {
@@ -2233,7 +2231,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $this->send_command($command);
         $res = $this->get_response(false, true);
         $status = $this->check_response($res, true);
-        $tags = array('UID' => 'uid', 'FLAGS' => 'flags', 'RFC822.SIZE' => 'size', 'INTERNALDATE' => 'internal_date');
+        $tags = array('X-GM-MSGID' => 'google_msg_id', 'X-GM-THRID' => 'google_thread_id', 'UID' => 'uid', 'FLAGS' => 'flags', 'RFC822.SIZE' => 'size', 'INTERNALDATE' => 'internal_date');
         $junk = array('SUBJECT', 'FROM', 'CONTENT-TYPE', 'TO', '(', ')', ']', 'X-PRIORITY', 'DATE');
         $flds = array('date' => 'date', 'from' => 'from', 'to' => 'to', 'subject' => 'subject', 'content-type' => 'content_type', 'x-priority' => 'x_priority');
         $headers = array();
@@ -2249,6 +2247,8 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                 $to = '';
                 $flags = '';
                 $internal_date = '';
+                $google_msg_id = '';
+                $google_thread_id = '';
                 $count = count($vals);
                 for ($i=0;$i<$count;$i++) {
                     if ($vals[$i] == 'BODY[HEADER.FIELDS') {
@@ -2295,7 +2295,8 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                     }
                     $headers[(string) $uid] = array('uid' => $uid, 'flags' => $flags, 'internal_date' => $internal_date, 'size' => $size,
                                      'date' => $date, 'from' => $from, 'to' => $to, 'subject' => $subject, 'content-type' => $content_type,
-                                     'timestamp' => time(), 'charset' => $cset, 'x-priority' => $x_priority);
+                                     'timestamp' => time(), 'charset' => $cset, 'x-priority' => $x_priority, 'google_msg_id' => $google_msg_id,
+                                     'google_thread_id' => $google_thread_id);
 
                     if ($raw) {
                         $headers[$uid] = array_map('trim', $headers[$uid]);
