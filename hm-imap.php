@@ -42,11 +42,12 @@ class Hm_IMAP_Base {
     /* attributes that can be set for the IMAP connaction */
     protected $config = array('server', 'starttls', 'port', 'tls', 'read_only',
         'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max',
-        'use_cache', 'max_history', 'blacklisted_extensions');
+        'use_cache', 'max_history', 'blacklisted_extensions', 'app_name', 'app_version',
+        'app_vendor', 'app_support_url');
 
     /* supported extensions */
     protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE',
-        'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT' );
+        'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT', 'ID' );
 
     /* extensions to declare with ENABLE */
     protected $declared_extensions = array('CONDSTORE', 'QRESYNC');
@@ -1530,6 +1531,10 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     public $default_delimiter = '/';
     public $default_prefix = '';
     public $blacklisted_extensions = array();
+    public $app_name = 'Hm_IMAP';
+    public $app_version = '3.0';
+    public $app_vendor = 'Hastymail Development Group';
+    public $app_support_url = 'http://hastymail.org/contact_us/';
 
     public $selected_mailbox = false;
     public $special_use_mailboxes = array(
@@ -3116,6 +3121,36 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $this->send_command("UNSELECT\r\n");
         $res = $this->get_response(false, true);
         return $this->check_response($res, true);
+    }
+
+    /**
+     * use the ID extension
+     *
+     * @return array list of server properties on success
+     */
+    public function id() {
+        $res = array();
+        if ($this->is_supported('ID')) {
+            $params = array(
+                'name' => $this->app_name,
+                'version' => $this->app_version,
+                'vendor' => $this->app_vendor,
+                'support-url' => $this->app_support_url,
+            );
+            $param_str = '';
+            foreach ($params as $name => $value) {
+                $param_str .= '"'.$name.'" "'.$value.'"';
+            }
+            if ($param_str) {
+                $command = 'ID ('.$param_str.")\r\n";
+                $this->send_command($command);
+                $result = $this->get_response(false, true);
+                if ($this->check_response($res, true)) {
+                    $res = $result;
+                }
+            }
+        }
+        return $res;
     }
 }
 
