@@ -124,6 +124,11 @@ assert_equal( true, is_array( $sorted_uids ) );
 assert_equal( true, !empty( $sorted_uids ) );
 assert_equal( 18, $sorted_uids[0] );
 
+if ( $imap->is_supported( 'ID' ) ) {
+    $id = $imap->id();
+    assert_equal( true, $id );
+}
+
 if ( $imap->is_supported( 'SORT' ) ) {
     $sorted_uids = $imap->get_message_sort_order( 'ARRIVAL' );
     assert_equal( true, is_array( $sorted_uids ) );
