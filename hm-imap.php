@@ -379,21 +379,9 @@ class Hm_IMAP_Base {
      *
      * @return void
      */
-    protected function send_command($command, $piped=false) {
+    protected function send_command($command) {
         $this->cached_response = false;
-        /* pipelined commands are sent in bunches. Improves performance */
-        if ($piped) {
-            $final_command = '';
-            foreach ($command as $v) {
-                $final_command .= 'A'.$this->command_number().' '.$v;
-            }
-            $command = $final_command;
-        }
-
-        /* single command */
-        else {
-            $command = 'A'.$this->command_number().' '.$command;
-        }
+        $command = 'A'.$this->command_number().' '.$command;
 
         /* send the command out to the server */
         if (is_resource($this->handle)) {
