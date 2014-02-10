@@ -24,19 +24,19 @@
 /* base functions for IMAP communication */
 class Hm_IMAP_Base {
 
-    protected $handle = false;           // fsockopen handle to the IMAP server
-    protected $debug = array();          // debug messages
-    protected $commands = array();       // list of IMAP commands issued
-    protected $responses = array();      // list of raw IMAP responses
-    protected $current_command = false;  // current/latest IMAP command issued
-    protected $max_read = false;         // limit on allowable read size
-    protected $command_count = 0;        // current command number
-    protected $cache_keys = array();     // cache by folder keys
-    protected $cache_data = array();     // cache data
-    protected $cached_response = false;  // flag to indicate we are using a cached response
-    protected $supported_extensions;     // IMAP extensions in the CAPABILITY response
-    protected $enabled_extensions;       // IMAP extensions validated by the ENABLE response
-    protected $capability = false;       // IMAP CAPABILITY response
+    protected $handle = false;                 // fsockopen handle to the IMAP server
+    protected $debug = array();                // debug messages
+    protected $commands = array();             // list of IMAP commands issued
+    protected $responses = array();            // list of raw IMAP responses
+    protected $current_command = false;        // current/latest IMAP command issued
+    protected $max_read = false;               // limit on allowable read size
+    protected $command_count = 0;              // current command number
+    protected $cache_keys = array();           // cache by folder keys
+    protected $cache_data = array();           // cache data
+    protected $cached_response = false;        // flag to indicate we are using a cached response
+    protected $supported_extensions = array(); // IMAP extensions in the CAPABILITY response
+    protected $enabled_extensions = array();   // IMAP extensions validated by the ENABLE response
+    protected $capability = false;             // IMAP CAPABILITY response
 
 
     /* attributes that can be set for the IMAP connaction */
@@ -1490,8 +1490,16 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
      *
      * @return string serialized version of the cache data
      */
-    public function dump_cache() {
-        return serialize(array($this->cache_keys, $this->cache_data));
+    public function dump_cache( $type = 'string') {
+        if ($type == 'array') {
+            return array($this->cache_keys, $this->cache_data);
+        }
+        elseif ($type == 'gzip') {
+            return gzcompress(serialize(array($this->cache_keys, $this->cache_data)));
+        }
+        else {
+            return serialize(array($this->cache_keys, $this->cache_data));
+        }
     }
 
     /**
@@ -1500,12 +1508,29 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
      * @param $data string serialized cache data from dump_cache()
      * @return void
      */
-    public function load_cache($data) {
-        $data = unserialize($data);
-        if (isset($data[0]) && isset($data[1])) {
-            $this->cache_keys = $data[0];
-            $this->cache_data = $data[1];
-            $this->debug[] = 'Cache loaded: '.count($this->cache_data);
+    public function load_cache($data, $type='string') {
+        if ($type == 'array') {
+            if (isset($data[0]) && isset($data[1])) {
+                $this->cache_keys = $data[0];
+                $this->cache_data = $data[1];
+                $this->debug[] = 'Cache loaded: '.count($this->cache_data);
+            }
+        }
+        elseif ($type == 'gzip') {
+            $data = unserialize(gzuncompress($data));
+            if (isset($data[0]) && isset($data[1])) {
+                $this->cache_keys = $data[0];
+                $this->cache_data = $data[1];
+                $this->debug[] = 'Cache loaded: '.count($this->cache_data);
+            }
+        }
+        else {
+            $data = unserialize($data);
+            if (isset($data[0]) && isset($data[1])) {
+                $this->cache_keys = $data[0];
+                $this->cache_data = $data[1];
+                $this->debug[] = 'Cache loaded: '.count($this->cache_data);
+            }
         }
     }
 
