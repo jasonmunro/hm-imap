@@ -48,7 +48,7 @@ class Hm_IMAP_Base {
 
     /* supported extensions */
     protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE',
-        'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT', 'ID' );
+        'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT', 'ID', 'X-GM-EXT-1');
 
     /* extensions to declare with ENABLE */
     protected $declared_extensions = array('CONDSTORE', 'QRESYNC');
@@ -3324,7 +3324,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
  * CREATE-SPECIAL-USE support
  * fix LOGINDISABLED wrt STARTTLS support
  * MULTI-APPEND support
- * fix or remove pipelining
  * more extensions...
  */
 ?>
