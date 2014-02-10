@@ -126,7 +126,7 @@ assert_equal( 18, $sorted_uids[0] );
 
 if ( $imap->is_supported( 'ID' ) ) {
     $id = $imap->id();
-    assert_equal( true, $id );
+    assert_equal( true, is_array( $id ) );
 }
 
 if ( $imap->is_supported( 'SORT' ) ) {
