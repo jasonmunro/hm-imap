@@ -3203,12 +3203,66 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         return $res;
     }
 
+    /**
+     * start writing a message to a folder with IMAP APPEND
+     *
+     * @param $mailbox string IMAP mailbox name
+     * @param $size int size of the message to be written
+     * @param $seen bool flag to mark the message seen
+     *
+     * $return bool true on success
+     */
+    public function append_start($mailbox, $size, $seen=true) {
+        if (!$this->clean($mailbox, 'mailbox') || !$this->clean($size, 'uid')) {
+            return false;
+        }
+        if ($seen) {
+            $command = 'APPEND "'.$this->utf7_encode($mailbox).'" (\Seen) {'.$size."}\r\n";
+        }
+        else {
+            $command = 'APPEND "'.$this->utf7_encode($mailbox).'" () {'.$size."}\r\n";
+        }
+        $this->send_command($command);
+        $result = $this->fgets();
+        if (substr($result, 0, 1) == '+') {
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    /**
+     * write a line to an active IMAP APPEND operation
+     *
+     * @param $string string line to write
+     *
+     * @return int length written
+     */
+    public function append_feed($string) {
+        fwrite($this->handle, $string);
+        $res = strlen($string);
+        return $res;
+    }
+
+    /**
+     * finish an IMAP APPEND operation
+     *
+     * @return bool true on success
+     */
+    public function append_end() {
+        $result = $this->get_response(false, true);
+        return $this->check_response($result, true);
+    }
+
 }
 
 /*
  * TODO:
  * CREATE-SPECIAL-USE support
  * fix LOGINDISABLED wrt STARTTLS support
- * APPEND and MULTI-APPEND support
+ * MULTI-APPEND support
+ * fix or remove pipelining
+ * more extensions...
  */
 ?>
