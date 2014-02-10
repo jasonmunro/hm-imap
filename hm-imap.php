@@ -37,6 +37,7 @@ class Hm_IMAP_Base {
     protected $supported_extensions = array(); // IMAP extensions in the CAPABILITY response
     protected $enabled_extensions = array();   // IMAP extensions validated by the ENABLE response
     protected $capability = false;             // IMAP CAPABILITY response
+    protected $server_id = array();            // server ID response values
 
 
     /* attributes that can be set for the IMAP connaction */
@@ -2573,6 +2574,32 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
+     * search using the Google X-GM-RAW IMAP extension
+     *
+     * @param $start_str string formatted search string like "has:attachment in:unread"
+     * 
+     * @return array list of IMAP UIDs that match the search
+     */
+    public function google_search($search_str) {
+        $uids = array();
+        if ($this->is_supported('X-GM-EXT-1')) {
+            /* TODO: validate search string, remove embedded double quotes */
+            $command = "UID SEARCH X-GM-RAW \"".$search_str."\"\r\n";
+            $this->send_command($command);
+            $res = $this->get_response(false, true);
+            $uids = array();
+            foreach ($res as $vals) {
+                foreach ($vals as $v) {
+                    if (ctype_digit((string) $v)) {
+                        $uids[] = $v;
+                    }
+                }
+            }
+        }
+        return $uids;
+    }
+
+    /**
      * get the headers for the selected message
      *
      * @param $uid int IMAP message UID
@@ -3195,7 +3222,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return array list of server properties on success
      */
     public function id() {
-        $res = false;
+        $server_id = array();
         if ($this->is_supported('ID')) {
             $params = array(
                 'name' => $this->app_name,
@@ -3212,12 +3239,29 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                 $this->send_command($command);
                 $result = $this->get_response(false, true);
                 if ($this->check_response($result, true)) {
-                    /* TODO: save any server id params */
+                    foreach ($result as $vals) {
+                        if (in_array('name', $vals)) {
+                            $server_id['name'] = $this->get_adjacent_response_value($vals, -1, 'name');
+                        }
+                        if (in_array('vendor', $vals)) {
+                            $server_id['vendor'] = $this->get_adjacent_response_value($vals, -1, 'vendor');
+                        }
+                        if (in_array('version', $vals)) {
+                            $server_id['version'] = $this->get_adjacent_response_value($vals, -1, 'version');
+                        }
+                        if (in_array('support-url', $vals)) {
+                            $server_id['support-url'] = $this->get_adjacent_response_value($vals, -1, 'support-url');
+                        }
+                        if (in_array('remote-host', $vals)) {
+                            $server_id['remote-host'] = $this->get_adjacent_response_value($vals, -1, 'remote-host');
+                        }
+                    }
+                    $this->server_id = $server_id;
                     $res = true;
                 }
             }
         }
-        return $res;
+        return $server_id;
     }
 
     /**
