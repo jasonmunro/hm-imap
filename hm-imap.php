@@ -42,11 +42,14 @@ class Hm_IMAP_Base {
     /* attributes that can be set for the IMAP connaction */
     protected $config = array('server', 'starttls', 'port', 'tls', 'read_only',
         'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max',
-        'use_cache', 'max_history');
+        'use_cache', 'max_history', 'blacklisted_extensions');
 
     /* supported extensions */
     protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE',
         'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT' );
+
+    /* extensions to declare with ENABLE */
+    protected $declared_extensions = array('CONDSTORE', 'QRESYNC');
 
     /**
      * increment the imap command prefix such that it counts
@@ -1526,6 +1529,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     public $max_history = 1000;
     public $default_delimiter = '/';
     public $default_prefix = '';
+    public $blacklisted_extensions = array();
 
     public $selected_mailbox = false;
     public $special_use_mailboxes = array(
@@ -1663,16 +1667,20 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     /**
      * use the ENABLE extension to tell the IMAP server what extensions we support
      *
-     * @return void
+     * @return array list of supported extensions that can be enabled
      */
     public function enable() {
         $extensions = array();
         if ($this->is_supported('ENABLE')) {
+            $supported = array_diff($this->declared_extensions, $this->blacklisted_extensions);
             if ($this->is_supported('QRESYNC')) {
-                $extension_string = implode(' ', array_filter($this->client_extensions, function($val) { return $val != 'CONDSTORE'; }));
+                $extension_string = implode(' ', array_filter($supported, function($val) { return $val != 'CONDSTORE'; }));
             }
             else {
-                $extension_string = implode(' ', $this->client_extensions);
+                $extension_string = implode(' ', $supported);
+            }
+            if (!$extension_string) {
+                return array();
             }
             $command = 'ENABLE '.$extension_string."\r\n";
             $this->send_command($command);
@@ -1736,7 +1744,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return bool true if the extension is supported
      */
     public function is_supported( $extension ) {
-        return in_array(strtolower($extension), $this->supported_extensions);
+        return in_array(strtolower($extension), array_diff($this->supported_extensions, $this->blacklisted_extensions));
     }
 
     /**
@@ -1827,7 +1835,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
 
                 if (in_array('STATUS', $vals)) {
                     $status_values = $this->parse_status_response(array($vals));
-                    $this->check_mailbox_state_change($attributes);
+                    $this->check_mailbox_state_change($status_values);
                     continue;
                 }
                 /* break at the end of the list */
@@ -3116,6 +3124,5 @@ class Hm_IMAP extends Hm_IMAP_Cache {
  * CREATE-SPECIAL-USE support
  * fix LOGINDISABLED wrt STARTTLS support
  * APPEND and MULTI-APPEND support
- * add extension blacklist support to is_supported
  */
 ?>
