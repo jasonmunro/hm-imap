@@ -1515,28 +1515,65 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
 class Hm_IMAP extends Hm_IMAP_Cache {
 
     /* config */
+
+    /* maximum characters to read in from a request */
     public $max_read = false;
+
+    /* IMAP server IP address or hostname */
     public $server = '127.0.0.1';
+
+    /* use STARTTLS */
     public $starttls = false;
+
+    /* IP port to connect to. Standard port is 143, TLS is 993 */
     public $port = 143;
+
+    /* enable TLS when connecting to the IMAP server */
     public $tls = false;
+
+    /* don't change the account state in any way */
     public $read_only = false;
+
+    /* convert folder names to utf7 */
     public $utf7_folders = false;
+
+    /* defaults to LOGIN, CRAM-MD5 also supported but experimental */
     public $auth = false;
+
+    /* search character set to use. can be US-ASCII, UTF-8, or '' */
     public $search_charset = '';
+
+    /* sort responses can _probably_ be parsed quickly. This is non-conformant however */
     public $sort_speedup = true;
+
+    /* use built in caching. strongly recommended */
     public $use_cache = true;
+
+    /* limit LIST/LSUB responses to this many folders */
     public $folder_max = 500;
+
+    /* number of commands and responses to keep in memory. */
     public $max_history = 1000;
+
+    /* default IMAP folder delimiter. Only used if NAMESPACE is not supported */
     public $default_delimiter = '/';
+
+    /* defailt IMAP mailbox prefix. Only used if NAMESPACE is not supported */
     public $default_prefix = '';
+
+    /* list of supported IMAP extensions to ignore */
     public $blacklisted_extensions = array();
+
+    /* IMAP ID client information */
     public $app_name = 'Hm_IMAP';
     public $app_version = '3.0';
     public $app_vendor = 'Hastymail Development Group';
     public $app_support_url = 'http://hastymail.org/contact_us/';
 
+    /* holds information about the currently selected mailbox */
     public $selected_mailbox = false;
+
+    /* special folders defined by the IMAP SPECIAL-USE extension */
     public $special_use_mailboxes = array(
         '\All' => false,
         '\Archive' => false,
@@ -1547,8 +1584,10 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         '\Trash' => false
     );
 
-    /* internal use */
+    /* holds the current IMAP connection state */
     private $state = 'disconnected';
+
+    /* used for message part content streaming */
     private $stream_size = 0;
 
     /**
@@ -1796,13 +1835,23 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * output IMAP session debug info
      *
      * @param $full bool flag to enable full IMAP response display
+     * @param $return bool flag to return the debug results instead of printing them
      *
-     * @return void
+     * @return void/string 
      */
-    public function show_debug($full=false) {
-        printf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
-        if ($full) {
-            printf("Response %s", print_r($this->responses, true));
+    public function show_debug($full=false, $return=false) {
+        if ($return) {
+            $res = sprintf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
+            if ($full) {
+                $res .= sprintf("Response %s", print_r($this->responses, true));
+            }
+            return $res;
+        }
+        else {
+            printf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
+            if ($full) {
+                printf("Response %s", print_r($this->responses, true));
+            }
         }
     }
 
@@ -3153,6 +3202,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         return $res;
     }
+
 }
 
 /*
