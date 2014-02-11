@@ -75,6 +75,15 @@ assert_equal( true, is_array( $search_res ) );
 assert_equal( true, !empty( $search_res ) );
 assert_equal( true, ctype_digit( $search_res[0] ) );
 
+if ( $imap->is_supported( 'ESEARCH' ) ) {
+    $esearch_res = $imap->search( 'ALL', false, false, false, array( 'MIN', 'MAX', 'COUNT', 'ALL' ) );
+    assert_equal( true, isset( $esearch_res['min'] ) );
+    assert_equal( 1, $esearch_res['min'] );
+    assert_equal( 25, $esearch_res['max'] );
+    assert_equal( 25, $esearch_res['count'] );
+    assert_equal( '1:25', $esearch_res['all'] );
+}
+
 $msg_list = $imap->get_message_list( array( 3 ) );
 assert_equal( true, isset( $msg_list[3] ) );
 assert_equal( 1, count( $msg_list ) );
@@ -119,6 +128,12 @@ assert_equal( 'test', $fld );
 $fld = $imap->decode_fld( '=?UTF-8?B?amFzb24=?=' );
 assert_equal( 'jason', $fld );
 
+$seq = $imap->convert_array_to_sequence( array( 1, 2, 3, 4, 5, 10, 11, 15, 20 ) );
+assert_equal( $seq, '1:5,10:11,15,20' );
+
+$list = $imap->convert_sequence_to_array( '1:10,70' );
+assert_equal( $list, array( 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 70 ) );
+
 $sorted_uids = $imap->sort_by_fetch( 'ARRIVAL', true, 'UNSEEN' );
 assert_equal( true, is_array( $sorted_uids ) );
 assert_equal( true, !empty( $sorted_uids ) );
@@ -134,6 +149,14 @@ if ( $imap->is_supported( 'SORT' ) ) {
     assert_equal( true, is_array( $sorted_uids ) );
     assert_equal( true, !empty( $sorted_uids ) );
     assert_equal( true, ctype_digit( $sorted_uids[0] ) );
+}
+if ( $imap->is_supported( 'ESORT' ) ) {
+    $esort_res = $imap->get_message_sort_order( 'ARRIVAL', true, 'ALL', array( 'MIN', 'MAX', 'COUNT', 'ALL' ) );
+    assert_equal( true, isset( $esort_res['min'] ) );
+    assert_equal( 1, $esort_res['min'] );
+    assert_equal( 25, $esort_res['max'] );
+    assert_equal( 25, $esort_res['count'] );
+    assert_equal( '1:25', $esort_res['all'] );
 }
 
 if ( $imap->is_supported( 'NAMESPACE' ) ) {
