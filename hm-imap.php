@@ -2272,10 +2272,10 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                     }
                     elseif (isset($tags[strtoupper($vals[$i])])) {
                         if (isset($vals[($i + 1)])) {
-                            if (($tags[strtoupper($vals[$i])] == 'flags' || $tags[strtoupper($vals[$i])] == 'google_lables' ) && $vals[$i + 1] == '(') {
+                            if (($tags[strtoupper($vals[$i])] == 'flags' || $tags[strtoupper($vals[$i])] == 'google_labels' ) && $vals[$i + 1] == '(') {
                                 $n = 2;
                                 while (isset($vals[$i + $n]) && $vals[$i + $n] != ')') {
-                                    $flags .= ' '.$vals[$i + $n];
+                                    $$tags[strtoupper($vals[$i])] .= ' '.$vals[$i + $n];
                                     $n++;
                                 }
                                 $i += $n;
