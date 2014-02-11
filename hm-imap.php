@@ -2585,15 +2585,17 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     public function google_search($search_str) {
         $uids = array();
         if ($this->is_supported('X-GM-EXT-1')) {
-            /* TODO: validate search string, remove embedded double quotes */
-            $command = "UID SEARCH X-GM-RAW \"".$search_str."\"\r\n";
-            $this->send_command($command);
-            $res = $this->get_response(false, true);
-            $uids = array();
-            foreach ($res as $vals) {
-                foreach ($vals as $v) {
-                    if (ctype_digit((string) $v)) {
-                        $uids[] = $v;
+            $search_str = str_replace('"', '', $search_str);
+            if ($this->is_clean($search_str, 'search_str')) {
+                $command = "UID SEARCH X-GM-RAW \"".$search_str."\"\r\n";
+                $this->send_command($command);
+                $res = $this->get_response(false, true);
+                $uids = array();
+                foreach ($res as $vals) {
+                    foreach ($vals as $v) {
+                        if (ctype_digit((string) $v)) {
+                            $uids[] = $v;
+                        }
                     }
                 }
             }
