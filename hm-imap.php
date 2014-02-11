@@ -2220,7 +2220,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         $command = 'UID FETCH '.$sorted_string.' (FLAGS INTERNALDATE RFC822.SIZE ';
         if ($this->is_supported( 'X-GM-EXT-1' )) {
-            $command .= 'X-GM-MSGID X-GM-THRID ';
+            $command .= 'X-GM-MSGID X-GM-THRID X-GM-LABELS ';
         }
         $command .= "BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE CONTENT-TYPE X-PRIORITY TO)])\r\n";
         $cache_command = $command.(string)$raw;
@@ -2231,7 +2231,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $this->send_command($command);
         $res = $this->get_response(false, true);
         $status = $this->check_response($res, true);
-        $tags = array('X-GM-MSGID' => 'google_msg_id', 'X-GM-THRID' => 'google_thread_id', 'UID' => 'uid', 'FLAGS' => 'flags', 'RFC822.SIZE' => 'size', 'INTERNALDATE' => 'internal_date');
+        $tags = array('X-GM-MSGID' => 'google_msg_id', 'X-GM-THRID' => 'google_thread_id', 'X-GM-LABELS' => 'google_labels', 'UID' => 'uid', 'FLAGS' => 'flags', 'RFC822.SIZE' => 'size', 'INTERNALDATE' => 'internal_date');
         $junk = array('SUBJECT', 'FROM', 'CONTENT-TYPE', 'TO', '(', ')', ']', 'X-PRIORITY', 'DATE');
         $flds = array('date' => 'date', 'from' => 'from', 'to' => 'to', 'subject' => 'subject', 'content-type' => 'content_type', 'x-priority' => 'x_priority');
         $headers = array();
@@ -2249,6 +2249,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                 $internal_date = '';
                 $google_msg_id = '';
                 $google_thread_id = '';
+                $google_labels = '';
                 $count = count($vals);
                 for ($i=0;$i<$count;$i++) {
                     if ($vals[$i] == 'BODY[HEADER.FIELDS') {
@@ -2271,7 +2272,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                     }
                     elseif (isset($tags[strtoupper($vals[$i])])) {
                         if (isset($vals[($i + 1)])) {
-                            if ($tags[strtoupper($vals[$i])] == 'flags' && $vals[$i + 1] == '(') {
+                            if (($tags[strtoupper($vals[$i])] == 'flags' || $tags[strtoupper($vals[$i])] == 'google_lables' ) && $vals[$i + 1] == '(') {
                                 $n = 2;
                                 while (isset($vals[$i + $n]) && $vals[$i + $n] != ')') {
                                     $flags .= ' '.$vals[$i + $n];
@@ -2296,7 +2297,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                     $headers[(string) $uid] = array('uid' => $uid, 'flags' => $flags, 'internal_date' => $internal_date, 'size' => $size,
                                      'date' => $date, 'from' => $from, 'to' => $to, 'subject' => $subject, 'content-type' => $content_type,
                                      'timestamp' => time(), 'charset' => $cset, 'x-priority' => $x_priority, 'google_msg_id' => $google_msg_id,
-                                     'google_thread_id' => $google_thread_id);
+                                     'google_thread_id' => $google_thread_id, 'google_labels' => $google_labels);
 
                     if ($raw) {
                         $headers[$uid] = array_map('trim', $headers[$uid]);
