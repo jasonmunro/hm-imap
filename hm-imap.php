@@ -48,7 +48,8 @@ class Hm_IMAP_Base {
 
     /* supported extensions */
     protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE',
-        'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT', 'ID', 'X-GM-EXT-1');
+        'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT', 'ID', 'X-GM-EXT-1',
+        'ESEARCH', 'ESORT');
 
     /* extensions to declare with ENABLE */
     protected $declared_extensions = array('CONDSTORE', 'QRESYNC');
@@ -1127,6 +1128,30 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
             $qresync = true;
         }
         return array($qresync, $attributes);
+    }
+
+    /**
+     * parse untagged ESEARCH/ESORT responses
+     *
+     * @param $vals array low level parsed IMAP response segment
+     *
+     * @return array list of ESEARCH response values
+     */
+    protected function parse_esearch_response($vals) {
+        $res = array();
+        if (in_array('MIN', $vals)) {
+            $res['min'] = $this->get_adjacent_response_value($vals, -1, 'MIN');
+        }
+        if (in_array('MAX', $vals)) {
+            $res['max'] = $this->get_adjacent_response_value($vals, -1, 'MAX');
+        }
+        if (in_array('COUNT', $vals)) {
+            $res['count'] = $this->get_adjacent_response_value($vals, -1, 'COUNT');
+        }
+        if (in_array('ALL', $vals)) {
+            $res['all'] = $this->get_adjacent_response_value($vals, -1, 'ALL');
+        }
+        return $res;
     }
 
     /**
@@ -2515,6 +2540,8 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
+     * use IMAP SEARCH or ESEARCH
+    /**
      * search a field for a keyword
      *
      * @param $target string message types to search. can be ALL, UNSEEN, ANSWERED, etc
@@ -2524,7 +2551,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      *
      * @return array list of IMAP message UIDs that match the search
      */
-    public function search($target='ALL', $uids=false, $fld=false, $term=false) {
+    public function search($target='ALL', $uids=false, $fld=false, $term=false, $esearch=array()) {
         if (($fld && !$this->is_clean($fld, 'search_str')) || !$this->is_clean($this->search_charset, 'charset') || ($term && !$this->is_clean($term, 'search_str')) || !$this->is_clean($target, 'keyword')) {
             return array();
         }
@@ -2552,7 +2579,16 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         else {
             $fld = '';
         }
-        $command = 'UID SEARCH ('.$target.')'.$charset.$uids.$fld."\r\n";
+        $esearch_enabled = false;
+        $command = 'UID SEARCH ';
+        if (!empty($esearch) && $this->is_supported('ESEARCH')) {
+            $valid = array_filter($esearch, function($v) { return in_array($v, array('MIN', 'MAX', 'COUNT', 'ALL')); });
+            if (!empty($valid)) {
+                $esearch_enabled = true;
+                $command .= 'RETURN ('.implode(' ', $valid).') ';
+            }
+        }
+        $command .= '('.$target.')'.$charset.$uids.$fld."\r\n";
         $cache = $this->check_cache($command);
         if ($cache) {
             return $cache;
@@ -2561,14 +2597,24 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $result = $this->get_response(false, true);
         $status = $this->check_response($result, true);
         $res = array();
+        $esearch_res = array();
         if ($status) {
             array_pop($result);
             foreach ($result as $vals) {
-                foreach ($vals as $v) {
-                    if (ctype_digit((string) $v)) {
-                        $res[] = $v;
+                if (in_array('ESEARCH', $vals)) {
+                    $esearch_res = $this->parse_esearch_response($vals);
+                    continue;
+                }
+                elseif (in_array('SEARCH', $vals)) {
+                    foreach ($vals as $v) {
+                        if (ctype_digit((string) $v)) {
+                            $res[] = $v;
+                        }
                     }
                 }
+            }
+            if ($esearch_enabled) {
+                $res = $esearch_res;
             }
             return $this->cache_return_val($res, $command);
         }
@@ -2708,11 +2754,21 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      *
      * @return array list of IMAP message UIDs
      */
-    public function get_message_sort_order($sort='ARRIVAL', $reverse=true, $filter='ALL') {
+    public function get_message_sort_order($sort='ARRIVAL', $reverse=true, $filter='ALL', $esort=array()) {
         if (!$this->is_clean($sort, 'keyword') || !$this->is_clean($filter, 'keyword') || !$this->is_supported('SORT')) {
             return false;
         }
-        $command = 'UID SORT ('.$sort.') US-ASCII '.$filter."\r\n";
+        $esort_enabled = false;
+        $esort_res = array();
+        $command = 'UID SORT ';
+        if (!empty($esort) && $this->is_supported('ESORT')) {
+            $valid = array_filter($esort, function($v) { return in_array($v, array('MIN', 'MAX', 'COUNT', 'ALL')); });
+            if (!empty($valid)) {
+                $esort_enabled = true;
+                $command .= 'RETURN ('.implode(' ', $valid).') ';
+            }
+        }
+        $command .= '('.$sort.') US-ASCII '.$filter."\r\n";
         $cache_command = $command.(string)$reverse;
         $cache = $this->check_cache($cache_command);
         if ($cache) {
@@ -2729,6 +2785,9 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $status = $this->check_response($res, true);
         $uids = array();
         foreach ($res as $vals) {
+            if ($vals[0] == '*' && strtoupper($vals[1]) == 'ESEARCH') {
+                $esort_res = $this->parse_esearch_response($vals);
+            }
             if ($vals[0] == '*' && strtoupper($vals[1]) == 'SORT') {
                 array_shift($vals);
                 array_shift($vals);
@@ -2742,6 +2801,9 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         if ($reverse) {
             $uids = array_reverse($uids);
+        }
+        if ($esort_enabled) {
+            $uids = $esort_res;
         }
         if ($status) {
             return $this->cache_return_val($uids, $cache_command);
@@ -3320,6 +3382,72 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         return $this->check_response($result, true);
     }
 
+    /**
+     * convert a sequence string to an array
+     *
+     * @param $sequence string an IMAP sequence string
+     * 
+     * @return $array list of ids
+     */
+    public function convert_sequence_to_array($sequence) {
+        $res = array();
+        foreach (explode(',', $sequence) as $atom) {
+            if (strstr($atom, ':')) {
+                $markers = explode(':', $atom);
+                if (ctype_digit($markers[0]) && ctype_digit($markers[1])) {
+                    $res = array_merge($res, range($markers[0], $markers[1]));
+                }
+            }
+            elseif (ctype_digit($atom)) {
+                $res[] = $atom;
+            }
+        }
+        return array_unique($res);
+    }
+
+    /**
+     * convert an array into a sequence string
+     *
+     * @param $array array list of ids
+     * 
+     * @return string an IMAP sequence string
+     */
+    public function convert_array_to_sequence($array) {
+        $res = '';
+        $seq = false;
+        $max = count($array) - 1;
+        foreach ($array as $index => $value) {
+            if (!isset($array[$index - 1])) {
+                $res .= $value;
+            }
+            elseif ($seq) {
+                $last_val = $array[$index - 1];
+                if ($index == $max) {
+                    $res .= $value;
+                    break;
+                }
+                elseif ($last_val == $value - 1) {
+                    continue;
+                }
+                else {
+                    $res .= $last_val.','.$value;
+                    $seq = false;
+                }
+
+            }
+            else {
+                $last_val = $array[$index - 1];
+                if ($last_val == $value - 1) {
+                    $seq = true;
+                    $res .= ':';
+                }
+                else {
+                    $res .= ','.$value;
+                }
+            }
+        }
+        return $res;
+    }
 }
 
 /*
