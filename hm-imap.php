@@ -1699,12 +1699,14 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     public function authenticate($username, $password) {
         $this->starttls();
         switch (strtolower($this->auth)) {
+
             case 'cram-md5':
+
                 $this->banner = $this->fgets(1024);
-                $cram1 = 'A'.$this->command_number().' AUTHENTICATE CRAM-MD5'."\r\n";
-                fputs ($this->handle, $cram1);
-                $response = $this->fgets(1024);
-                $this->responses[] = $response;
+                $cram1 = 'AUTHENTICATE CRAM-MD5'."\r\n";
+                $this->send_command($cram1);
+                $response = $this->get_response();
+
                 $challenge = base64_decode(substr(trim($response), 1));
                 $pass .= str_repeat(chr(0x00), (64-strlen($password)));
                 $ipad = str_repeat(chr(0x36), 64);
@@ -3452,9 +3454,17 @@ class Hm_IMAP extends Hm_IMAP_Cache {
 
 /*
  * TODO:
- * CREATE-SPECIAL-USE support
- * fix LOGINDISABLED wrt STARTTLS support
- * MULTI-APPEND support
- * more extensions...
+ *
+ * - Test a wider variety of breakage scenerios (from an API point of view)
+ * - Add limit controlled cache pruning
+ * - Provide a recommended production $config
+ * - fix fragile get_message_structure internals
+ * - fix or remove COMPRESS extension. stream functions don't seem to work ...
+ * - add support for more extensions:
+ *   - CREATE-SPECIAL-USE support
+ *   - LOGINDISABLED wrt STARTTLS support (its an rfc MUST)
+ *   - MULTI-APPEND support
+ *   - ...
+ *
  */
 ?>
