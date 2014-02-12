@@ -1,13 +1,12 @@
 <?php
 
 /**
- * Simple tests for the Hm_IMAP class. requires an IMAP account
- * with known content for all the tests to run properly.
+ * tests.php
  *
- * php ./tests.php imap-username imap-password
- *
- * You will need to check the config in the $imap->connect section
- * and tweak the server/port/etc/ for your particular setup.
+ * Simple unit test suite for the Hm_IMAP class. requires an IMAP account with
+ * known content for all the tests to run properly (if you setup the config to
+ * a valid local account it's easy to adjust the expected results to make all
+ * the tests pass). Every public method has at least one test in this file.
  */
 
 /* check for username and password */
