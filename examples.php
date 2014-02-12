@@ -1,6 +1,8 @@
 <?php
 
 /**
+ * examples.php
+ *
  * Examples of how to use the Hm_IMAP class.
  * You can run all the examples from the command line with:
  *
@@ -119,7 +121,11 @@ if ($imap->connect([
         }
     }
 
-    /* run 'em all! */
+    /* run 'em all!
+     *
+     * TODO: add new public interface commands
+     *
+     * */
     if ( ALL_COMMANDS_EXAMPLE ) {
 
         /* get a list of all mailboxes */
