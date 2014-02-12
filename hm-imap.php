@@ -44,7 +44,7 @@ class Hm_IMAP_Base {
     protected $config = array('server', 'starttls', 'port', 'tls', 'read_only',
         'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max',
         'use_cache', 'max_history', 'blacklisted_extensions', 'app_name', 'app_version',
-        'app_vendor', 'app_support_url');
+        'app_vendor', 'app_support_url', 'cache_limit');
 
     /* supported extensions */
     protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE',
@@ -1407,8 +1407,72 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
             }
             $this->cache_data[$key][$command] = $res;
         }
-        /* TODO: prune cache */
+        $count = 0;
+        foreach ($this->cache_data as $commands) {
+            $count += count($commands);
+        }
+        if ($count > $this->cache_limit) {
+            $this->prune_cache($count);
+        }
         return $res;
+    }
+
+    /**
+     * search for cache entries to prune
+     *
+     * @param $count int current number of cache entries
+     * @param $exclude array list of cache keys to skip
+     *
+     * @return array list of key tuples of cache entries to prune
+     */
+    protected function collect_cache_entries_to_prune($count, $exclude) {
+        $to_remove = array();
+        if ($count > $this->cache_limit) {
+            foreach ($this->cache_data as $key => $commands) {
+                if ( in_array( $key, $exclude ) ) {
+                    continue;
+                }
+                foreach ($commands as $command => $value) {
+                    $to_remove[] = array($key, $command); 
+                    $count--;
+                    if ($count == $this->cache_limit) {
+                        break 2;
+                    }
+                }
+            }
+        }
+        return $to_remove;
+    }
+
+    /**
+     * prune the IMAP cache if it needs it
+     *
+     * @return void
+     */
+    protected function prune_cache($count) {
+        $current_key = false;
+        $to_remove = array();
+        if (isset($this->selected_mailbox['name'])) {
+            if (isset($this->cache_keys[$this->selected_mailbox['name']])) {
+                $current_key = $this->cache_keys[$this->selected_mailbox['name']];
+            }
+        }
+        $to_remove = $this->collect_cache_entries_to_prune($count, array($current_key, 'LIST', 'LSUB', 'NAMESPACE' ));
+        $count -= count($to_remove);
+        if ($count > $this->cache_limit) {
+            $to_remove = $this->collect_cache_entries_to_prune($count, array($current_key));
+            $count -= count($to_remove);
+            if ($count > $this->cache_limit) {
+                $to_remove = $this->collect_cache_entries_to_prune($count, array());
+                $count -= count($to_remove);
+            }
+        }
+        if (!empty($to_remove)) {
+            foreach($to_remove as $keys) {
+                $this->debug[] = sprintf('Unset cache at (%s) for key (%s)', $keys[0], $keys[1]);
+                unset($this->cache_data[$keys[0]][$keys[1]]);
+            }
+        }
     }
 
     /**
@@ -1419,7 +1483,7 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
      *
      * @return mixed cached result or false if there is no cached data to use
      */
-    protected function check_cache( $command, $check_only=false ) {
+    protected function check_cache($command, $check_only=false) {
         if (!$this->use_cache) {
             return false;
         }
@@ -1602,6 +1666,9 @@ class Hm_IMAP extends Hm_IMAP_Cache {
 
     /* list of supported IMAP extensions to ignore */
     public $blacklisted_extensions = array();
+
+    /* maximum number of IMAP commands to cache */
+    public $cache_limit = 100;
 
     /* IMAP ID client information */
     public $app_name = 'Hm_IMAP';
@@ -3456,7 +3523,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
  * TODO:
  *
  * - Test a wider variety of breakage scenerios (from an API point of view)
- * - Add limit controlled cache pruning
  * - Provide a recommended production $config
  * - fix fragile get_message_structure internals
  * - fix or remove COMPRESS extension. stream functions don't seem to work ...
