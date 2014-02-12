@@ -29,6 +29,8 @@ require( 'hm-imap.php' );
 
 /* start up primary connection */
 $imap = new Hm_IMAP();
+
+/* start up secondary connection */
 $imap2 = new Hm_IMAP();
 
 /* connect to gmail's IMAP server in read only mode */
@@ -57,13 +59,18 @@ if ( $imap->connect( [
     /* poll should trigger a QRESYNC untagged response */
     $imap->poll();
 
+    /* collect response */
     $result = $imap->show_debug( false, true );
+
+    /* search for cache update success message */
     if ( !strstr( $result, 'Cache bust avoided' ) ) {
         die( "QRESYNC test FAILED\n" );
     }
     else {
         printf("QRESYNC test PASSED\n");
     }
+
+    /* show debug statements and IMAP commands */
     $imap->show_debug();
     $imap2->show_debug();
 }
