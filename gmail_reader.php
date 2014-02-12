@@ -56,6 +56,7 @@ if ( $imap->connect( [
     /* loop endlessly */
     while ( true ) {
 
+        /* poll for changes */
         $imap->poll();
 
         /* search for unseen messages with the Gmail search API */
