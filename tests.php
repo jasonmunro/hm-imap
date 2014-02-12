@@ -45,9 +45,6 @@ $connect = $imap->connect([
 assert_equal( true, $connect );
 assert_equal( 'authenticated', $imap->get_state() );
 
-$enable_results = $imap->enable();
-assert_equal( true, in_array( 'QRESYNC', $enable_results ) );
-
 $caps = $imap->get_capability();
 assert_equal( true, strstr( $caps, 'CAPABILITY' ) );
 
@@ -74,15 +71,6 @@ $search_res = $imap->search( 'ALL', '1:100', 'To', 'jason' );
 assert_equal( true, is_array( $search_res ) );
 assert_equal( true, !empty( $search_res ) );
 assert_equal( true, ctype_digit( $search_res[0] ) );
-
-if ( $imap->is_supported( 'ESEARCH' ) ) {
-    $esearch_res = $imap->search( 'ALL', false, false, false, array( 'MIN', 'MAX', 'COUNT', 'ALL' ) );
-    assert_equal( true, isset( $esearch_res['min'] ) );
-    assert_equal( 1, $esearch_res['min'] );
-    assert_equal( 25, $esearch_res['max'] );
-    assert_equal( 25, $esearch_res['count'] );
-    assert_equal( '1:25', $esearch_res['all'] );
-}
 
 $msg_list = $imap->get_message_list( array( 3 ) );
 assert_equal( true, isset( $msg_list[3] ) );
@@ -138,6 +126,20 @@ $sorted_uids = $imap->sort_by_fetch( 'ARRIVAL', true, 'UNSEEN' );
 assert_equal( true, is_array( $sorted_uids ) );
 assert_equal( true, !empty( $sorted_uids ) );
 assert_equal( 18, $sorted_uids[0] );
+
+if ( $imap->is_supported( 'ENABLE' ) ) {
+    $enable_results = $imap->enable();
+    assert_equal( true, in_array( 'QRESYNC', $enable_results ) );
+}
+
+if ( $imap->is_supported( 'ESEARCH' ) ) {
+    $esearch_res = $imap->search( 'ALL', false, false, false, array( 'MIN', 'MAX', 'COUNT', 'ALL' ) );
+    assert_equal( true, isset( $esearch_res['min'] ) );
+    assert_equal( 1, $esearch_res['min'] );
+    assert_equal( 25, $esearch_res['max'] );
+    assert_equal( 25, $esearch_res['count'] );
+    assert_equal( '1:25', $esearch_res['all'] );
+}
 
 if ( $imap->is_supported( 'ID' ) ) {
     $id = $imap->id();
