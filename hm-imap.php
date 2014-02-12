@@ -49,7 +49,7 @@ class Hm_IMAP_Base {
     /* supported extensions */
     protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE',
         'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT', 'ID', 'X-GM-EXT-1',
-        'ESEARCH', 'ESORT');
+        'ESEARCH', 'ESORT', 'QUOTA');
 
     /* extensions to declare with ENABLE */
     protected $declared_extensions = array('CONDSTORE', 'QRESYNC');
@@ -1067,6 +1067,30 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
     }
 
     /**
+     * parse GETQUOTAROOT and GETQUOTA responses
+     *
+     * @param $data array low level parsed IMAP response segment
+     *
+     * @return array list of properties
+     */
+    protected function parse_quota_response($vals) {
+        $current = 0;
+        $max = 0;
+        $name = '';
+        if (in_array('QUOTA', $vals)) {
+            $name = $this->get_adjacent_response_value($vals, -1, 'QUOTA');
+            if ($name == '(') {
+                $name = '';
+            }
+        }
+        if (in_array('STORAGE', $vals)) {
+            $current = $this->get_adjacent_response_value($vals, -1, 'STORAGE');
+            $max = $this->get_adjacent_response_value($vals, -2, 'STORAGE');
+        }
+        return array($name, $max, $current);
+    }
+
+    /**
      * collect useful untagged responses about mailbox state from certain command responses
      *
      * @param $data array low level parsed IMAP response segment
@@ -1966,7 +1990,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return array associative array of folder details
      */
     public function get_mailbox_list($lsub=false, $mailbox='', $keyword='*') {
-        /* possibly limit list response to subscribed folders only */
 
         /* defaults */
         $folders = array();
@@ -3517,6 +3540,56 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         return $res;
     }
+
+    /**
+     * use the IMAP GETQUOTA command to fetch quota information
+     *
+     * @param $quota_root string named quota root to fetch
+     * 
+     * @return array list of quota details
+     */
+    public function get_quota($quota_root='') {
+        $quotas = array();
+        if ($this->is_supported('QUOTA')) {
+            $command = 'GETQUOTA "'.$quota_root."\"\r\n";
+            $this->send_command($command);
+            $res = $this->get_response(false, true);
+            if ($this->check_response($res, true)) {
+                foreach($res as $vals) {
+                    list($name, $max, $current) = $this->parse_quota_response($vals);
+                    if ($max) {
+                        $quotas[] = array('name' => $name, 'max' => $max, 'current' => $current);
+                    }
+                }
+            }
+        }
+        return $quotas;
+    }
+
+    /**
+     * use the IMAP GETQUOTAROOT command to fetch quota information about a mailbox
+     *
+     * @param $mailbox string IMAP folder to check
+     * 
+     * @return array list of quota details
+     */
+    public function get_quota_root($mailbox) {
+        $quotas = array();
+        if ($this->is_supported('QUOTA') && $this->is_clean($mailbox, 'mailbox')) {
+            $command = 'GETQUOTAROOT "'. $this->utf7_encode($mailbox).'"'."\r\n";
+            $this->send_command($command);
+            $res = $this->get_response(false, true);
+            if ($this->check_response($res, true)) {
+                foreach($res as $vals) {
+                    list($name, $max, $current) = $this->parse_quota_response($vals);
+                    if ($max) {
+                        $quotas[] = array('name' => $name, 'max' => $max, 'current' => $current);
+                    }
+                }
+            }
+        }
+        return $quotas;
+    }
 }
 
 /*
@@ -3526,6 +3599,8 @@ class Hm_IMAP extends Hm_IMAP_Cache {
  * - Provide a recommended production $config
  * - fix fragile get_message_structure internals
  * - fix or remove COMPRESS extension. stream functions don't seem to work ...
+ * - update examples.php with newer public methods
+ * - think about breaking this up into multiple files ...
  * - add support for more extensions:
  *   - CREATE-SPECIAL-USE support
  *   - LOGINDISABLED wrt STARTTLS support (its an rfc MUST)
