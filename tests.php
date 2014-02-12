@@ -172,6 +172,13 @@ if ( $imap->is_supported( 'X-GM-EXT-1' ) ) {
     assert_equal( true, !empty( $unread ) );
 }
 
+if ( $imap->is_supported( 'QUOTA' ) ) {
+    $quotas = $imap->get_quota();
+    assert_equal( true, !empty( $quotas ) );
+    $quotas = $imap->get_quota_root( 'INBOX' );
+    assert_equal( true, !empty( $quotas ) );
+}
+
 $created = $imap->create_mailbox( 'test123456789' );
 assert_equal( true, $created );
 
