@@ -1984,7 +1984,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
  * - Provide a recommended production $config
  * - fix fragile get_message_structure internals
  * - fix or remove COMPRESS extension. stream functions don't seem to work ...
- * - update examples.php with newer public methods
  * - think about breaking this up into multiple files ...
  * - add support for more extensions:
  *   - CREATE-SPECIAL-USE support
