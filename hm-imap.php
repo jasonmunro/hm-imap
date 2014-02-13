@@ -226,6 +226,31 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
+     * attempt starttls
+     *
+     * @return void
+     */
+    public function starttls() {
+        if ($this->starttls) {
+            $command = "STARTTLS\r\n";
+            $this->send_command($command);
+            $response = $this->get_response();
+            if (!empty($response)) {
+                $end = array_pop($response);
+                if (substr($end, 0, strlen('A'.$this->command_count.' OK')) == 'A'.$this->command_count.' OK') {
+                    stream_socket_enable_crypto($this->handle, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+                }
+                else {
+                    $this->debug[] = 'Unexpected results from STARTTLS: '.implode(' ', $response);
+                }
+            }
+            else {
+                $this->debug[] = 'No response from STARTTLS command';
+            }
+        }
+    }
+
+    /**
      * use the ENABLE extension to tell the IMAP server what extensions we support
      *
      * @return array list of supported extensions that can be enabled
@@ -375,7 +400,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return array associative array of folder details
      */
     public function get_mailbox_list($lsub=false, $mailbox='', $keyword='*') {
-
         /* defaults */
         $folders = array();
         $excluded = array();
@@ -1975,6 +1999,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         return $quotas;
     }
+
 }
 
 /*
