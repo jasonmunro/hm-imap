@@ -230,7 +230,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return void
      */
     public function starttls() {
-        if ($this->is_supported(('STARTTLS')) {
+        if ($this->is_supported('STARTTLS')) {
             $command = "STARTTLS\r\n";
             $this->send_command($command);
             $response = $this->get_response();
@@ -1998,6 +1998,10 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         return $quotas;
     }
+    /* EXTENSIONS */
+    /* CONNECT/AUTH */
+    /* HELPERS */
+    /* HIGH LEVEL */
 
 }
 
