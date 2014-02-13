@@ -108,6 +108,8 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     public function __construct() {
     }
 
+    /* ------------------ CONNECT/AUTH ------------------------------------- */
+
     /**
      * connect to the imap server
      *
@@ -249,57 +251,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
     }
 
-    /**
-     * use the ENABLE extension to tell the IMAP server what extensions we support
-     *
-     * @return array list of supported extensions that can be enabled
-     */
-    public function enable() {
-        $extensions = array();
-        if ($this->is_supported('ENABLE')) {
-            $supported = array_diff($this->declared_extensions, $this->blacklisted_extensions);
-            if ($this->is_supported('QRESYNC')) {
-                $extension_string = implode(' ', array_filter($supported, function($val) { return $val != 'CONDSTORE'; }));
-            }
-            else {
-                $extension_string = implode(' ', $supported);
-            }
-            if (!$extension_string) {
-                return array();
-            }
-            $command = 'ENABLE '.$extension_string."\r\n";
-            $this->send_command($command);
-            $res = $this->get_response(false, true);
-            if ($this->check_response($res, true)) {
-                foreach($res as $vals) {
-                    if (in_array('ENABLED', $vals)) {
-                        $extensions[] = $this->get_adjacent_response_value($vals, -1, 'ENABLED');
-                    }
-                }
-            }
-            $this->enabled_extensions = $extensions;
-            $this->debug[] = sprintf("Enabled extensions: ".implode(', ', $extensions));
-        }
-        return $extensions;
-    }
-
-    /**
-     * attempt enable IMAP COMPRESS extension
-     * TODO: currently does not work ...
-     *
-     * @return void
-     */
-    public function enable_compression() {
-        if ($this->is_supported('COMPRESS=DEFLATE')) {
-            $this->send_command("COMPRESS DEFLATE\r\n");
-            $res = $this->get_response(false, true);
-            if ($this->check_response($res, true)) {
-                stream_filter_prepend($this->handle, 'zlib.inflate', STREAM_FILTER_READ);
-                stream_filter_append($this->handle, 'zlib.deflate', STREAM_FILTER_WRITE, 6);
-                $this->debug[] = 'DEFLATE compression extension activated';
-            }
-        }
-    }
+    /* ------------------ UNSELECTED STATE COMMANDS ------------------------ */
 
     /**
      * fetch IMAP server capability response
@@ -319,76 +271,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
             $this->parse_extensions_from_capability();
             return $this->capability;
         }
-    }
-
-    /**
-     * check if an IMAP extension is supported by the server
-     *
-     * @param $extension string name of an extension
-     * 
-     * @return bool true if the extension is supported
-     */
-    public function is_supported( $extension ) {
-        return in_array(strtolower($extension), array_diff($this->supported_extensions, $this->blacklisted_extensions));
-    }
-
-    /**
-     * returns current IMAP state
-     *
-     * @return string one of:
-     *                disconnected  = no IMAP server TCP connection
-     *                connected     = an IMAP server TCP connection exists
-     *                authenticated = successfully authenticated to the IMAP server
-     *                selected      = a mailbox has been selected
-     */
-    public function get_state() {
-        return $this->state;
-    }
-
-    /**
-     * decode mail fields to human readable text
-     *
-     * @param $string string field to decode
-     *
-     * @return string decoded field
-     */
-    public function decode_fld($string) {
-        if (preg_match_all("/(=\?[^\?]+\?(q|b)\?[^\?]+\?=)/i", $string, $matches)) {
-            foreach ($matches[1] as $v) {
-                $fld = substr($v, 2, -2);
-                $charset = strtolower(substr($fld, 0, strpos($fld, '?')));
-                $fld = substr($fld, (strlen($charset) + 1));
-                $encoding = $fld{0};
-                $fld = substr($fld, (strpos($fld, '?') + 1));
-                if (strtoupper($encoding) == 'B') {
-                    $fld = mb_convert_encoding(base64_decode($fld), 'UTF-8', $charset);
-                }
-                elseif (strtoupper($encoding) == 'Q') {
-                    $fld = mb_convert_encoding(quoted_printable_decode($fld), 'UTF-8', $charset);
-                }
-                $string = str_replace($v, $fld, $string);
-            }
-        }
-        return trim($string);
-    } 
-
-    /**
-     * output IMAP session debug info
-     *
-     * @param $full bool flag to enable full IMAP response display
-     * @param $return bool flag to return the debug results instead of printing them
-     *
-     * @return void/string 
-     */
-    public function show_debug($full=false, $return=false) {
-        $res = sprintf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
-        if ($full) {
-            $res .= sprintf("Response %s", print_r($this->responses, true));
-        }
-        if (!$return) {
-            echo $res;
-        }
-        return $res;
     }
 
     /**
@@ -703,6 +585,27 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
+     * issue IMAP status command on a mailbox
+     *
+     * @param $mailbox string IMAP mailbox to check
+     * @param $args array list of properties to fetch
+     *
+     * @return array list of attribute values discovered
+     */
+    public function get_mailbox_status($mailbox, $args=array('UNSEEN', 'UIDVALIDITY', 'UIDNEXT', 'MESSAGES', 'RECENT')) {
+        $command = 'STATUS "'.$this->utf7_encode($mailbox).'" ('.implode(' ', $args).")\r\n";
+        $this->send_command($command);
+        $response = $this->get_response(false, true);
+        if ($this->check_response($response, true)) {
+            $attributes = $this->parse_status_response($response);
+            $this->check_mailbox_state_change($attributes);
+        }
+        return $attributes;
+    }
+
+    /* ------------------ SELECTED STATE COMMANDS -------------------------- */
+
+    /**
      * use IMAP NOOP to poll for untagged server messages
      *
      * @return array list of properties that have changed since SELECT
@@ -897,67 +800,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
-     * return a flat list of message parts and IMAP part numbers
-     * from a nested BODYSTRUCTURE response
-     *
-     * @param $struct array nested BODYSTRUCTURE response
-     * 
-     * @return array list of message part details
-     */
-    public function flatten_bodystructure($struct, $res=array()) {
-        foreach($struct as $id => $vals) {
-            if(isset($vals['subtype']) && isset($vals['type'])) {
-                $res[$id] = $vals['type'].'/'.$vals['subtype'];
-            }
-            if(isset($vals['subs'])) {
-                $res = $this->flatten_bodystructure($vals['subs'], $res);
-            }
-        }
-        return $res;
-    }
-
-    /**
-     * search a nested BODYSTRUCTURE response for a specific part
-     *
-     * @param $struct array the structure to search
-     * @param $search_term string the search term
-     * @param $search_flds array list of fields to search for the term
-     *
-     * @return array array of all matching parts from the message
-     */
-    public function search_bodystructure($struct, $search_flds, $all=true, $res=array()) {
-        foreach ($struct as $id => $vals) {
-            if (!is_array($vals)) {
-                continue;
-            }
-            $match_count = count($search_flds);
-            $matches = 0;
-            if (isset($search_flds['imap_part_number']) && $id == $search_flds['imap_part_number']) {
-                $matches++;
-            }
-            foreach ($vals as $name => $val) {
-                if ($name == 'subs') {
-                    $res = $this->search_bodystructure($val, $search_flds, $all, $res);
-                }
-                elseif (isset($search_flds[$name]) && stristr($val, $search_flds[$name])) {
-                    $matches++;
-                }
-            }
-            if ($matches == $match_count) {
-                $part = $vals;
-                if (isset($part['subs'])) {
-                    $part['subs'] = count($part['subs']);
-                }
-                $res[$id] = $part;
-                if (!$all) {
-                    return $res;
-                }
-            }
-        }
-        return $res;
-    }
-
-    /**
      * get content for a message part
      *
      * @param $uid int a single IMAP message UID
@@ -1122,34 +964,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
-     * search using the Google X-GM-RAW IMAP extension
-     *
-     * @param $start_str string formatted search string like "has:attachment in:unread"
-     * 
-     * @return array list of IMAP UIDs that match the search
-     */
-    public function google_search($search_str) {
-        $uids = array();
-        if ($this->is_supported('X-GM-EXT-1')) {
-            $search_str = str_replace('"', '', $search_str);
-            if ($this->is_clean($search_str, 'search_str')) {
-                $command = "UID SEARCH X-GM-RAW \"".$search_str."\"\r\n";
-                $this->send_command($command);
-                $res = $this->get_response(false, true);
-                $uids = array();
-                foreach ($res as $vals) {
-                    foreach ($vals as $v) {
-                        if (ctype_digit((string) $v)) {
-                            $uids[] = $v;
-                        }
-                    }
-                }
-            }
-        }
-        return $uids;
-    }
-
-    /**
      * get the headers for the selected message
      *
      * @param $uid int IMAP message UID
@@ -1246,72 +1060,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
-     * use the SORT extension to get a sorted UID list
-     *
-     * @param $sort string sort order. can be one of ARRIVAL, DATE, CC, TO, SUBJECT, FROM, or SIZE
-     * @param $reverse bool flag to reverse the sort order
-     * @param $filter string can be one of ALL, SEEN, UNSEEN ANSWERED, UNANSWERED, DELETED, UNDELETED, FLAGGED, or UNFLAGGED
-     *
-     * @return array list of IMAP message UIDs
-     */
-    public function get_message_sort_order($sort='ARRIVAL', $reverse=true, $filter='ALL', $esort=array()) {
-        if (!$this->is_clean($sort, 'keyword') || !$this->is_clean($filter, 'keyword') || !$this->is_supported('SORT')) {
-            return false;
-        }
-        $esort_enabled = false;
-        $esort_res = array();
-        $command = 'UID SORT ';
-        if (!empty($esort) && $this->is_supported('ESORT')) {
-            $valid = array_filter($esort, function($v) { return in_array($v, array('MIN', 'MAX', 'COUNT', 'ALL')); });
-            if (!empty($valid)) {
-                $esort_enabled = true;
-                $command .= 'RETURN ('.implode(' ', $valid).') ';
-            }
-        }
-        $command .= '('.$sort.') US-ASCII '.$filter."\r\n";
-        $cache_command = $command.(string)$reverse;
-        $cache = $this->check_cache($cache_command);
-        if ($cache) {
-            return $cache;
-        }
-        $this->send_command($command);
-        if ($this->sort_speedup) {
-            $speedup = true;
-        }
-        else {
-            $speedup = false;
-        }
-        $res = $this->get_response(false, true, 8192, $speedup);
-        $status = $this->check_response($res, true);
-        $uids = array();
-        foreach ($res as $vals) {
-            if ($vals[0] == '*' && strtoupper($vals[1]) == 'ESEARCH') {
-                $esort_res = $this->parse_esearch_response($vals);
-            }
-            if ($vals[0] == '*' && strtoupper($vals[1]) == 'SORT') {
-                array_shift($vals);
-                array_shift($vals);
-                $uids = array_merge($uids, $vals);
-            }
-            else {
-                if (ctype_digit((string) $vals[0])) {
-                    $uids = array_merge($uids, $vals);
-                }
-            }
-        }
-        if ($reverse) {
-            $uids = array_reverse($uids);
-        }
-        if ($esort_enabled) {
-            $uids = $esort_res;
-        }
-        if ($status) {
-            return $this->cache_return_val($uids, $cache_command);
-        }
-        return $uids;
-    }
-
-    /**
      * start streaming a message part. returns the number of characters in the message
      *
      * @param $uid int IMAP message UID
@@ -1374,73 +1122,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
             $res = false;
         }
         return $res;
-    }
-
-    /**
-     * return the formatted message content of the first part that matches the supplied MIME type
-     *
-     * @param $uid int IMAP UID value for the message
-     * @param $type string Primary MIME type like "text"
-     * @param $subtype string Secondary MIME type like "plain"
-     *
-     * @return string formatted message content, bool false if no matching part is found
-     */
-    public function get_first_message_part($uid, $type, $subtype) {
-        $struct = $this->get_message_structure($uid);
-        $matches = $this->search_bodystructure($struct, array('type' => $type, 'subtype' => $subtype), false);
-        if (!empty($matches)) {
-            $msg_part_num = array_slice(array_keys($matches), 0, 1)[0];
-            $struct = array_slice($matches, 0, 1)[0];
-            return ($this->get_message_content($uid, $msg_part_num, false, $struct));
-        } 
-        return false;
-    }
-
-    /**
-     * return a list of headers and UIDs for a page of a mailbox
-     *
-     * @param $mailbox string the mailbox to access
-     * @param $sort string sort order. can be one of ARRIVAL, DATE, CC, TO, SUBJECT, FROM, or SIZE
-     * @param $filter string type of messages to include (UNSEEN, ANSWERED, ALL, etc)
-     * @param $limit int max number of messages to return
-     * @param $offset int offset from the first message in the list
-     *
-     * @return array list of headers
-     */
-
-    public function get_mailbox_page($mailbox, $sort, $rev, $filter, $offset=0, $limit=0) {
-        $result = array();
-
-        /* select the mailbox if need be */
-        if (!$this->selected_mailbox || $this->selected_mailbox['name'] != $mailbox) {
-            $this->select_mailbox($mailbox);
-        }
- 
-        /* use the SORT extension if we can */
-        if ($this->is_supported( 'SORT' )) {
-            $uids = $this->get_message_sort_order($sort, $rev, $filter);
-        }
-
-        /* fall back to using FETCH and manually sorting */
-        else {
-            $uids = $this->sort_by_fetch($sort, $rev, $filter);
-        }
-
-        /* reduce to one page */
-        if ($limit) {
-            $uids = array_slice($uids, $offset, $limit, true);
-        }
-
-        /* get the headers and build a result array by UID */
-        if (!empty($uids)) {
-            $headers = $this->get_message_list($uids);
-            foreach($uids as $uid) {
-                if (isset($headers[$uid])) {
-                    $result[$uid] = $headers[$uid];
-                }
-            }
-        }
-        return $result;
     }
 
     /**
@@ -1578,6 +1259,8 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         return $uids;
     }
+
+    /* ------------------ WRITE COMMANDS ----------------------------------- */
 
     /**
      * delete an existing mailbox
@@ -1753,84 +1436,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
-     * issue IMAP status command on a mailbox
-     *
-     * @param $mailbox string IMAP mailbox to check
-     * @param $args array list of properties to fetch
-     *
-     * @return array list of attribute values discovered
-     */
-    public function get_mailbox_status($mailbox, $args=array('UNSEEN', 'UIDVALIDITY', 'UIDNEXT', 'MESSAGES', 'RECENT')) {
-        $command = 'STATUS "'.$this->utf7_encode($mailbox).'" ('.implode(' ', $args).")\r\n";
-        $this->send_command($command);
-        $response = $this->get_response(false, true);
-        if ($this->check_response($response, true)) {
-            $attributes = $this->parse_status_response($response);
-            $this->check_mailbox_state_change($attributes);
-        }
-        return $attributes;
-    }
-
-    /**
-     * unselect the selected mailbox
-     *
-     * @return bool true on success
-     */
-    public function unselect_mailbox() {
-        $this->send_command("UNSELECT\r\n");
-        $res = $this->get_response(false, true);
-        return $this->check_response($res, true);
-    }
-
-    /**
-     * use the ID extension
-     *
-     * @return array list of server properties on success
-     */
-    public function id() {
-        $server_id = array();
-        if ($this->is_supported('ID')) {
-            $params = array(
-                'name' => $this->app_name,
-                'version' => $this->app_version,
-                'vendor' => $this->app_vendor,
-                'support-url' => $this->app_support_url,
-            );
-            $param_parts = array();
-            foreach ($params as $name => $value) {
-                $param_parts[] = '"'.$name.'" "'.$value.'"';
-            }
-            if (!empty($param_parts)) {
-                $command = 'ID ('.implode(' ', $param_parts).")\r\n";
-                $this->send_command($command);
-                $result = $this->get_response(false, true);
-                if ($this->check_response($result, true)) {
-                    foreach ($result as $vals) {
-                        if (in_array('name', $vals)) {
-                            $server_id['name'] = $this->get_adjacent_response_value($vals, -1, 'name');
-                        }
-                        if (in_array('vendor', $vals)) {
-                            $server_id['vendor'] = $this->get_adjacent_response_value($vals, -1, 'vendor');
-                        }
-                        if (in_array('version', $vals)) {
-                            $server_id['version'] = $this->get_adjacent_response_value($vals, -1, 'version');
-                        }
-                        if (in_array('support-url', $vals)) {
-                            $server_id['support-url'] = $this->get_adjacent_response_value($vals, -1, 'support-url');
-                        }
-                        if (in_array('remote-host', $vals)) {
-                            $server_id['remote-host'] = $this->get_adjacent_response_value($vals, -1, 'remote-host');
-                        }
-                    }
-                    $this->server_id = $server_id;
-                    $res = true;
-                }
-            }
-        }
-        return $server_id;
-    }
-
-    /**
      * start writing a message to a folder with IMAP APPEND
      *
      * @param $mailbox string IMAP mailbox name
@@ -1881,6 +1486,8 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $result = $this->get_response(false, true);
         return $this->check_response($result, true);
     }
+
+    /* ------------------ HELPERS ------------------------------------------ */
 
     /**
      * convert a sequence string to an array
@@ -1950,6 +1557,139 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     }
 
     /**
+     * decode mail fields to human readable text
+     *
+     * @param $string string field to decode
+     *
+     * @return string decoded field
+     */
+    public function decode_fld($string) {
+        if (preg_match_all("/(=\?[^\?]+\?(q|b)\?[^\?]+\?=)/i", $string, $matches)) {
+            foreach ($matches[1] as $v) {
+                $fld = substr($v, 2, -2);
+                $charset = strtolower(substr($fld, 0, strpos($fld, '?')));
+                $fld = substr($fld, (strlen($charset) + 1));
+                $encoding = $fld{0};
+                $fld = substr($fld, (strpos($fld, '?') + 1));
+                if (strtoupper($encoding) == 'B') {
+                    $fld = mb_convert_encoding(base64_decode($fld), 'UTF-8', $charset);
+                }
+                elseif (strtoupper($encoding) == 'Q') {
+                    $fld = mb_convert_encoding(quoted_printable_decode($fld), 'UTF-8', $charset);
+                }
+                $string = str_replace($v, $fld, $string);
+            }
+        }
+        return trim($string);
+    } 
+
+    /**
+     * check if an IMAP extension is supported by the server
+     *
+     * @param $extension string name of an extension
+     * 
+     * @return bool true if the extension is supported
+     */
+    public function is_supported( $extension ) {
+        return in_array(strtolower($extension), array_diff($this->supported_extensions, $this->blacklisted_extensions));
+    }
+
+    /**
+     * returns current IMAP state
+     *
+     * @return string one of:
+     *                disconnected  = no IMAP server TCP connection
+     *                connected     = an IMAP server TCP connection exists
+     *                authenticated = successfully authenticated to the IMAP server
+     *                selected      = a mailbox has been selected
+     */
+    public function get_state() {
+        return $this->state;
+    }
+
+    /**
+     * output IMAP session debug info
+     *
+     * @param $full bool flag to enable full IMAP response display
+     * @param $return bool flag to return the debug results instead of printing them
+     *
+     * @return void/string 
+     */
+    public function show_debug($full=false, $return=false) {
+        $res = sprintf("\nDebug %s\n", print_r(array_merge($this->debug, $this->commands), true));
+        if ($full) {
+            $res .= sprintf("Response %s", print_r($this->responses, true));
+        }
+        if (!$return) {
+            echo $res;
+        }
+        return $res;
+    }
+
+    /**
+     * return a flat list of message parts and IMAP part numbers
+     * from a nested BODYSTRUCTURE response
+     *
+     * @param $struct array nested BODYSTRUCTURE response
+     * 
+     * @return array list of message part details
+     */
+    public function flatten_bodystructure($struct, $res=array()) {
+        foreach($struct as $id => $vals) {
+            if(isset($vals['subtype']) && isset($vals['type'])) {
+                $res[$id] = $vals['type'].'/'.$vals['subtype'];
+            }
+            if(isset($vals['subs'])) {
+                $res = $this->flatten_bodystructure($vals['subs'], $res);
+            }
+        }
+        return $res;
+    }
+
+    /**
+     * search a nested BODYSTRUCTURE response for a specific part
+     *
+     * @param $struct array the structure to search
+     * @param $search_term string the search term
+     * @param $search_flds array list of fields to search for the term
+     *
+     * @return array array of all matching parts from the message
+     */
+    public function search_bodystructure($struct, $search_flds, $all=true, $res=array()) {
+        foreach ($struct as $id => $vals) {
+            if (!is_array($vals)) {
+                continue;
+            }
+            $match_count = count($search_flds);
+            $matches = 0;
+            if (isset($search_flds['imap_part_number']) && $id == $search_flds['imap_part_number']) {
+                $matches++;
+            }
+            foreach ($vals as $name => $val) {
+                if ($name == 'subs') {
+                    $res = $this->search_bodystructure($val, $search_flds, $all, $res);
+                }
+                elseif (isset($search_flds[$name]) && stristr($val, $search_flds[$name])) {
+                    $matches++;
+                }
+            }
+            if ($matches == $match_count) {
+                $part = $vals;
+                if (isset($part['subs'])) {
+                    $part['subs'] = count($part['subs']);
+                }
+                $res[$id] = $part;
+                if (!$all) {
+                    return $res;
+                }
+            }
+        }
+        return $res;
+    }
+
+    /* ------------------ EXTENSIONS --------------------------------------- */
+
+    /**
      * use the IMAP GETQUOTA command to fetch quota information
      *
      * @param $quota_root string named quota root to fetch
@@ -1998,10 +1738,280 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         return $quotas;
     }
-    /* EXTENSIONS */
-    /* CONNECT/AUTH */
-    /* HELPERS */
-    /* HIGH LEVEL */
+
+    /**
+     * use the ENABLE extension to tell the IMAP server what extensions we support
+     *
+     * @return array list of supported extensions that can be enabled
+     */
+    public function enable() {
+        $extensions = array();
+        if ($this->is_supported('ENABLE')) {
+            $supported = array_diff($this->declared_extensions, $this->blacklisted_extensions);
+            if ($this->is_supported('QRESYNC')) {
+                $extension_string = implode(' ', array_filter($supported, function($val) { return $val != 'CONDSTORE'; }));
+            }
+            else {
+                $extension_string = implode(' ', $supported);
+            }
+            if (!$extension_string) {
+                return array();
+            }
+            $command = 'ENABLE '.$extension_string."\r\n";
+            $this->send_command($command);
+            $res = $this->get_response(false, true);
+            if ($this->check_response($res, true)) {
+                foreach($res as $vals) {
+                    if (in_array('ENABLED', $vals)) {
+                        $extensions[] = $this->get_adjacent_response_value($vals, -1, 'ENABLED');
+                    }
+                }
+            }
+            $this->enabled_extensions = $extensions;
+            $this->debug[] = sprintf("Enabled extensions: ".implode(', ', $extensions));
+        }
+        return $extensions;
+    }
+
+    /**
+     * unselect the selected mailbox
+     *
+     * @return bool true on success
+     */
+    public function unselect_mailbox() {
+        $this->send_command("UNSELECT\r\n");
+        $res = $this->get_response(false, true);
+        return $this->check_response($res, true);
+    }
+
+    /**
+     * use the ID extension
+     *
+     * @return array list of server properties on success
+     */
+    public function id() {
+        $server_id = array();
+        if ($this->is_supported('ID')) {
+            $params = array(
+                'name' => $this->app_name,
+                'version' => $this->app_version,
+                'vendor' => $this->app_vendor,
+                'support-url' => $this->app_support_url,
+            );
+            $param_parts = array();
+            foreach ($params as $name => $value) {
+                $param_parts[] = '"'.$name.'" "'.$value.'"';
+            }
+            if (!empty($param_parts)) {
+                $command = 'ID ('.implode(' ', $param_parts).")\r\n";
+                $this->send_command($command);
+                $result = $this->get_response(false, true);
+                if ($this->check_response($result, true)) {
+                    foreach ($result as $vals) {
+                        if (in_array('name', $vals)) {
+                            $server_id['name'] = $this->get_adjacent_response_value($vals, -1, 'name');
+                        }
+                        if (in_array('vendor', $vals)) {
+                            $server_id['vendor'] = $this->get_adjacent_response_value($vals, -1, 'vendor');
+                        }
+                        if (in_array('version', $vals)) {
+                            $server_id['version'] = $this->get_adjacent_response_value($vals, -1, 'version');
+                        }
+                        if (in_array('support-url', $vals)) {
+                            $server_id['support-url'] = $this->get_adjacent_response_value($vals, -1, 'support-url');
+                        }
+                        if (in_array('remote-host', $vals)) {
+                            $server_id['remote-host'] = $this->get_adjacent_response_value($vals, -1, 'remote-host');
+                        }
+                    }
+                    $this->server_id = $server_id;
+                    $res = true;
+                }
+            }
+        }
+        return $server_id;
+    }
+
+    /**
+     * use the SORT extension to get a sorted UID list
+     *
+     * @param $sort string sort order. can be one of ARRIVAL, DATE, CC, TO, SUBJECT, FROM, or SIZE
+     * @param $reverse bool flag to reverse the sort order
+     * @param $filter string can be one of ALL, SEEN, UNSEEN ANSWERED, UNANSWERED, DELETED, UNDELETED, FLAGGED, or UNFLAGGED
+     *
+     * @return array list of IMAP message UIDs
+     */
+    public function get_message_sort_order($sort='ARRIVAL', $reverse=true, $filter='ALL', $esort=array()) {
+        if (!$this->is_clean($sort, 'keyword') || !$this->is_clean($filter, 'keyword') || !$this->is_supported('SORT')) {
+            return false;
+        }
+        $esort_enabled = false;
+        $esort_res = array();
+        $command = 'UID SORT ';
+        if (!empty($esort) && $this->is_supported('ESORT')) {
+            $valid = array_filter($esort, function($v) { return in_array($v, array('MIN', 'MAX', 'COUNT', 'ALL')); });
+            if (!empty($valid)) {
+                $esort_enabled = true;
+                $command .= 'RETURN ('.implode(' ', $valid).') ';
+            }
+        }
+        $command .= '('.$sort.') US-ASCII '.$filter."\r\n";
+        $cache_command = $command.(string)$reverse;
+        $cache = $this->check_cache($cache_command);
+        if ($cache) {
+            return $cache;
+        }
+        $this->send_command($command);
+        if ($this->sort_speedup) {
+            $speedup = true;
+        }
+        else {
+            $speedup = false;
+        }
+        $res = $this->get_response(false, true, 8192, $speedup);
+        $status = $this->check_response($res, true);
+        $uids = array();
+        foreach ($res as $vals) {
+            if ($vals[0] == '*' && strtoupper($vals[1]) == 'ESEARCH') {
+                $esort_res = $this->parse_esearch_response($vals);
+            }
+            if ($vals[0] == '*' && strtoupper($vals[1]) == 'SORT') {
+                array_shift($vals);
+                array_shift($vals);
+                $uids = array_merge($uids, $vals);
+            }
+            else {
+                if (ctype_digit((string) $vals[0])) {
+                    $uids = array_merge($uids, $vals);
+                }
+            }
+        }
+        if ($reverse) {
+            $uids = array_reverse($uids);
+        }
+        if ($esort_enabled) {
+            $uids = $esort_res;
+        }
+        if ($status) {
+            return $this->cache_return_val($uids, $cache_command);
+        }
+        return $uids;
+    }
+
+    /**
+     * search using the Google X-GM-RAW IMAP extension
+     *
+     * @param $start_str string formatted search string like "has:attachment in:unread"
+     * 
+     * @return array list of IMAP UIDs that match the search
+     */
+    public function google_search($search_str) {
+        $uids = array();
+        if ($this->is_supported('X-GM-EXT-1')) {
+            $search_str = str_replace('"', '', $search_str);
+            if ($this->is_clean($search_str, 'search_str')) {
+                $command = "UID SEARCH X-GM-RAW \"".$search_str."\"\r\n";
+                $this->send_command($command);
+                $res = $this->get_response(false, true);
+                $uids = array();
+                foreach ($res as $vals) {
+                    foreach ($vals as $v) {
+                        if (ctype_digit((string) $v)) {
+                            $uids[] = $v;
+                        }
+                    }
+                }
+            }
+        }
+        return $uids;
+    }
+
+    /**
+     * attempt enable IMAP COMPRESS extension
+     * TODO: currently does not work ...
+     *
+     * @return void
+     */
+    public function enable_compression() {
+        if ($this->is_supported('COMPRESS=DEFLATE')) {
+            $this->send_command("COMPRESS DEFLATE\r\n");
+            $res = $this->get_response(false, true);
+            if ($this->check_response($res, true)) {
+                stream_filter_prepend($this->handle, 'zlib.inflate', STREAM_FILTER_READ);
+                stream_filter_append($this->handle, 'zlib.deflate', STREAM_FILTER_WRITE, 6);
+                $this->debug[] = 'DEFLATE compression extension activated';
+            }
+        }
+    }
+
+    /* ------------------ HIGH LEVEL --------------------------------------- */
+
+    /**
+     * return the formatted message content of the first part that matches the supplied MIME type
+     *
+     * @param $uid int IMAP UID value for the message
+     * @param $type string Primary MIME type like "text"
+     * @param $subtype string Secondary MIME type like "plain"
+     *
+     * @return string formatted message content, bool false if no matching part is found
+     */
+    public function get_first_message_part($uid, $type, $subtype) {
+        $struct = $this->get_message_structure($uid);
+        $matches = $this->search_bodystructure($struct, array('type' => $type, 'subtype' => $subtype), false);
+        if (!empty($matches)) {
+            $msg_part_num = array_slice(array_keys($matches), 0, 1)[0];
+            $struct = array_slice($matches, 0, 1)[0];
+            return ($this->get_message_content($uid, $msg_part_num, false, $struct));
+        } 
+        return false;
+    }
+
+    /**
+     * return a list of headers and UIDs for a page of a mailbox
+     *
+     * @param $mailbox string the mailbox to access
+     * @param $sort string sort order. can be one of ARRIVAL, DATE, CC, TO, SUBJECT, FROM, or SIZE
+     * @param $filter string type of messages to include (UNSEEN, ANSWERED, ALL, etc)
+     * @param $limit int max number of messages to return
+     * @param $offset int offset from the first message in the list
+     *
+     * @return array list of headers
+     */
+
+    public function get_mailbox_page($mailbox, $sort, $rev, $filter, $offset=0, $limit=0) {
+        $result = array();
+
+        /* select the mailbox if need be */
+        if (!$this->selected_mailbox || $this->selected_mailbox['name'] != $mailbox) {
+            $this->select_mailbox($mailbox);
+        }
+ 
+        /* use the SORT extension if we can */
+        if ($this->is_supported( 'SORT' )) {
+            $uids = $this->get_message_sort_order($sort, $rev, $filter);
+        }
+
+        /* fall back to using FETCH and manually sorting */
+        else {
+            $uids = $this->sort_by_fetch($sort, $rev, $filter);
+        }
+
+        /* reduce to one page */
+        if ($limit) {
+            $uids = array_slice($uids, $offset, $limit, true);
+        }
+
+        /* get the headers and build a result array by UID */
+        if (!empty($uids)) {
+            $headers = $this->get_message_list($uids);
+            foreach($uids as $uid) {
+                if (isset($headers[$uid])) {
+                    $result[$uid] = $headers[$uid];
+                }
+            }
+        }
+        return $result;
+    }
 
 }
 
