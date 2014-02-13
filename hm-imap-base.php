@@ -49,7 +49,7 @@ class Hm_IMAP_Base {
     /* supported extensions */
     protected $client_extensions = array('SORT', 'COMPRESS', 'NAMESPACE', 'CONDSTORE',
         'ENABLE', 'QRESYNC', 'MOVE', 'SPECIAL-USE', 'LIST-STATUS', 'UNSELECT', 'ID', 'X-GM-EXT-1',
-        'ESEARCH', 'ESORT', 'QUOTA');
+        'ESEARCH', 'ESORT', 'QUOTA', 'LIST-EXTENDED');
 
     /* extensions to declare with ENABLE */
     protected $declared_extensions = array('CONDSTORE', 'QRESYNC');
@@ -1206,11 +1206,18 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
             }
 
             /* send command to the IMAP server and fetch the response */
-            if ($mailbox) {
+            if ($mailbox && $namespace) {
                 $namespace .= $delim.$mailbox;
             }
+            else {
+                $namespace .= $mailbox;
+            }
             if ($this->is_supported('LIST-STATUS')) {
-                $status = ' RETURN (STATUS (MESSAGES UNSEEN UIDVALIDITY UIDNEXT RECENT))';
+                $status = ' RETURN (';
+                if ($this->is_supported('LIST-EXTENDED')) {
+                    $status .= 'CHILDREN ';
+                }
+                $status .= 'STATUS (MESSAGES UNSEEN UIDVALIDITY UIDNEXT RECENT))';
             }
             else {
                 $status = '';
