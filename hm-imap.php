@@ -466,7 +466,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
 
         /* ALL account need an inbox. If we did not find one manually add it to the results */
-        if (!isset($folders['INBOX'])) {
+        if (!isset($folders['INBOX']) && !$mailbox && $keyword == '*') {
             $folders = array_merge(array('INBOX' => array(
                     'name' => 'INBOX', 'basename' => 'INBOX', 'realname' => 'INBOX', 'noselect' => false,
                     'parent' => false, 'has_kids' => false, )), $folders);
@@ -629,6 +629,8 @@ class Hm_IMAP extends Hm_IMAP_Cache {
 
     /**
      * return a header list for the supplied message uids
+     *
+     * TODO: refactor. abstract header line continuation parsing for re-use
      *
      * @param $uids array/string an array of uids or a valid IMAP sequence set as a string
      * @param $raw bool flag to disable decoding header values
@@ -1955,9 +1957,15 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      *
      * @return string formatted message content, bool false if no matching part is found
      */
-    public function get_first_message_part($uid, $type, $subtype) {
+    public function get_first_message_part($uid, $type, $subtype=false) {
+        if (!$subtype) {
+            $flds = array('type' => $type);
+        }
+        else {
+            $flds = array('type' => $type, 'subtype' => $subtype);
+        }
         $struct = $this->get_message_structure($uid);
-        $matches = $this->search_bodystructure($struct, array('type' => $type, 'subtype' => $subtype), false);
+        $matches = $this->search_bodystructure($struct, $flds, false);
         if (!empty($matches)) {
             $msg_part_num = array_slice(array_keys($matches), 0, 1)[0];
             $struct = array_slice($matches, 0, 1)[0];
@@ -2013,6 +2021,28 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         return $result;
     }
 
+    /**
+     * return all the folders contained at a hierarchy level, and if possible, if they have sub-folders
+     *
+     * @param $level string mailbox name or empty string for the top level
+     *
+     * @return array list of matching folders
+     */
+    public function get_folder_list_by_level($level='') {
+        $result = array();
+        $folders = $this->get_mailbox_list(false, $level, '%');
+        foreach ($folders as $name => $folder) {
+            $result[$name] = array(
+                'delim' => $folder['delim'],
+                'basename' => $folder['basename'],
+                'children' => $folder['has_kids'],
+                'noselect' => $folder['noselect'],
+                'name_parts' => $folder['name_parts'],
+            );
+        }
+        return $result;
+    }
+
 }
 
 /*
@@ -2020,6 +2050,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
  *
  * - Test a wider variety of breakage scenerios (from an API point of view)
  * - Provide a recommended production $config
+ * - abstract header result parsing
  * - fix fragile get_message_structure internals
  * - fix or remove COMPRESS extension. stream functions don't seem to work ...
  * - think about breaking this up into multiple files ...
