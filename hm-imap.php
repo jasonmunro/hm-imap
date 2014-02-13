@@ -34,9 +34,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     /* IMAP server IP address or hostname */
     public $server = '127.0.0.1';
 
-    /* use STARTTLS */
-    public $starttls = false;
-
     /* IP port to connect to. Standard port is 143, TLS is 993 */
     public $port = 143;
 
@@ -173,7 +170,9 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return bool true on sucessful login
      */
     public function authenticate($username, $password) {
-        $this->starttls();
+        if (!$this->tls) {
+            $this->starttls();
+        }
         switch (strtolower($this->auth)) {
 
             case 'cram-md5':
@@ -231,7 +230,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return void
      */
     public function starttls() {
-        if ($this->starttls) {
+        if ($this->is_supported(('STARTTLS')) {
             $command = "STARTTLS\r\n";
             $this->send_command($command);
             $response = $this->get_response();
@@ -2012,7 +2011,6 @@ class Hm_IMAP extends Hm_IMAP_Cache {
  * - think about breaking this up into multiple files ...
  * - add support for more extensions:
  *   - CREATE-SPECIAL-USE support
- *   - LOGINDISABLED wrt STARTTLS support (its an rfc MUST)
  *   - MULTI-APPEND support
  *   - ...
  *

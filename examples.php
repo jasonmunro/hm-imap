@@ -45,7 +45,6 @@ if ($imap->connect([
     'server'         => '127.0.0.1',  // IMAP server name or address
     'port'           => 143,          // IMAP server port
     'tls'            => false,        // Use TLS encryption
-    'starttls'       => false,        // Use IMAP STARTTLS
     'auth'           => 'login',      // can be login or cram-md5 (cram is untested)
     'read_only'      => true,         // read only IMAP connection
     'search_charset' => false,        // charset for searching, can be US-ASCII, UTF-8, or false

@@ -41,7 +41,7 @@ class Hm_IMAP_Base {
 
 
     /* attributes that can be set for the IMAP connaction */
-    protected $config = array('server', 'starttls', 'port', 'tls', 'read_only',
+    protected $config = array('server', 'port', 'tls', 'read_only',
         'utf7_folders', 'auth', 'search_charset', 'sort_speedup', 'folder_max',
         'use_cache', 'max_history', 'blacklisted_extensions', 'app_name', 'app_version',
         'app_vendor', 'app_support_url', 'cache_limit');
