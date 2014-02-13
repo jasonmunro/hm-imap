@@ -179,8 +179,23 @@ if ( $imap->is_supported( 'QUOTA' ) ) {
     assert_equal( true, !empty( $quotas ) );
 }
 
-$created = $imap->create_mailbox( 'test123456789' );
+$created = $imap->create_mailbox( 'test123456789/' );
 assert_equal( true, $created );
+
+$created = $imap->create_mailbox( 'test123456789/subfolder/' );
+assert_equal( true, $created );
+
+$created = $imap->create_mailbox( 'test123456789/subfolder/another_folder' );
+assert_equal( true, $created );
+
+$level_list = $imap->get_folder_list_by_level( 'test123456789/' );
+assert_equal( true, !empty( $level_list ) );
+
+$deleted = $imap->delete_mailbox( 'test123456789/subfolder/another_folder' );
+assert_equal( true, $deleted );
+
+$deleted = $imap->delete_mailbox( 'test123456789/subfolder' );
+assert_equal( true, $deleted );
 
 $renamed = $imap->rename_mailbox( 'test123456789', 'test987654321' );
 assert_equal( true, $renamed );
@@ -216,8 +231,9 @@ $imap->show_debug();
 
 /* helper function for test result checking */
 function assert_equal( $expected, $actual ) {
-    global $passed;
+    global $passed, $imap;
     if ( $actual != $expected ) {
+        $imap->show_debug( true );
         debug_print_backtrace();
         die(sprintf("assert_equal failed\nexpected: %s\nactual: %s\n",
             $expected, $actual));
