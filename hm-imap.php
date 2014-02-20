@@ -538,6 +538,9 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      * @return array list of information about the selected mailbox
      */
     public function select_mailbox($mailbox) {
+        if (isset($this->selected_mailbox['name']) && $this->selected_mailbox['name'] == $mailbox) {
+            return $this->poll();
+        }
         $box = $this->utf7_encode(str_replace('"', '\"', $mailbox));
         if (!$this->is_clean($box, 'mailbox')) {
             return false;
