@@ -466,10 +466,10 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
 
         /* ALL account need an inbox. If we did not find one manually add it to the results */
-        if (!isset($folders['INBOX']) && !$mailbox && $keyword == '*') {
+        if (!isset($folders['INBOX']) && !$mailbox ) {
             $folders = array_merge(array('INBOX' => array(
                     'name' => 'INBOX', 'basename' => 'INBOX', 'realname' => 'INBOX', 'noselect' => false,
-                    'parent' => false, 'has_kids' => false, )), $folders);
+                    'parent' => false, 'has_kids' => false, 'name_parts' => array(), 'delim' => $delim)), $folders);
         }
 
         /* sort and return the list */
