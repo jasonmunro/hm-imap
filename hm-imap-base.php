@@ -1387,7 +1387,8 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
         }
         elseif ($this->selected_mailbox) {
             $key = sha1((string) $this->selected_mailbox['name'].$this->selected_mailbox['detail']['uidvalidity'].
-                $this->selected_mailbox['detail']['uidnext'].$this->selected_mailbox['detail']['exists']);
+                $this->selected_mailbox['detail']['uidnext'].$this->selected_mailbox['detail']['exists'].
+                $this->selected_mailbox['detail']['recent'].$this->selected_mailbox['detail']['first_unseen']);
             $box = $this->selected_mailbox['name'];
             if (isset($this->cache_keys[$box])) {
                 $old_key = $this->cache_keys[$box];
