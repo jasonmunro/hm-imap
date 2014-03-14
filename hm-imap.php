@@ -656,7 +656,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         if ($this->is_supported( 'X-GM-EXT-1' )) {
             $command .= 'X-GM-MSGID X-GM-THRID X-GM-LABELS ';
         }
-        $command .= "BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE CONTENT-TYPE X-PRIORITY TO)])\r\n";
+        $command .= "BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE CONTENT-TYPE X-PRIORITY TO LIST-ARCHIVE)])\r\n";
         $cache_command = $command.(string)$raw;
         $cache = $this->check_cache($cache_command);
         if ($cache) {
@@ -666,14 +666,15 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $res = $this->get_response(false, true);
         $status = $this->check_response($res, true);
         $tags = array('X-GM-MSGID' => 'google_msg_id', 'X-GM-THRID' => 'google_thread_id', 'X-GM-LABELS' => 'google_labels', 'UID' => 'uid', 'FLAGS' => 'flags', 'RFC822.SIZE' => 'size', 'INTERNALDATE' => 'internal_date');
-        $junk = array('SUBJECT', 'FROM', 'CONTENT-TYPE', 'TO', '(', ')', ']', 'X-PRIORITY', 'DATE');
-        $flds = array('date' => 'date', 'from' => 'from', 'to' => 'to', 'subject' => 'subject', 'content-type' => 'content_type', 'x-priority' => 'x_priority');
+        $junk = array('LIST-ARCHIVE', 'SUBJECT', 'FROM', 'CONTENT-TYPE', 'TO', '(', ')', ']', 'X-PRIORITY', 'DATE');
+        $flds = array('list-archive' => 'list_archive', 'date' => 'date', 'from' => 'from', 'to' => 'to', 'subject' => 'subject', 'content-type' => 'content_type', 'x-priority' => 'x_priority');
         $headers = array();
         foreach ($res as $n => $vals) {
             if (isset($vals[0]) && $vals[0] == '*') {
                 $uid = 0;
                 $size = 0;
                 $subject = '';
+                $list_archive = '';
                 $from = '';
                 $date = '';
                 $x_priority = 0;
@@ -731,7 +732,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                     $headers[(string) $uid] = array('uid' => $uid, 'flags' => $flags, 'internal_date' => $internal_date, 'size' => $size,
                                      'date' => $date, 'from' => $from, 'to' => $to, 'subject' => $subject, 'content-type' => $content_type,
                                      'timestamp' => time(), 'charset' => $cset, 'x-priority' => $x_priority, 'google_msg_id' => $google_msg_id,
-                                     'google_thread_id' => $google_thread_id, 'google_labels' => $google_labels);
+                                     'google_thread_id' => $google_thread_id, 'google_labels' => $google_labels, 'list_archive' => $list_archive);
 
                     if ($raw) {
                         $headers[$uid] = array_map('trim', $headers[$uid]);
