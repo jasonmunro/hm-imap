@@ -1168,9 +1168,8 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
         foreach($attributes as $name => $value) {
             if ($value !== false) {
                 if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
-                    $state_changed = true;
                     $this->selected_mailbox['detail'][$name] = $value;
-                    $result[ $name ] = $value;
+                    $state_changed = true;
                 }
             }
         }
@@ -1510,12 +1509,11 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
         }
         elseif ($this->selected_mailbox) {
             $box = $this->selected_mailbox['name'];
-            if (isset($this->cache_keys[$box])) {
-                $key = $this->cache_keys[$box];
-                if (isset($this->cache_data[$key][$command])) {
-                    $msg = 'Cache hit for: '.$box.' with: '.$command;
-                    $res = $this->cache_data[$key][$command];
-                }
+            $key = sha1((string) $this->selected_mailbox['name'].$this->selected_mailbox['detail']['uidvalidity'].
+            $this->selected_mailbox['detail']['uidnext'].$this->selected_mailbox['detail']['exists']);
+            if (isset($this->cache_data[$key][$command])) {
+                $msg = 'Cache hit for: '.$box.' with: '.$command;
+                $res = $this->cache_data[$key][$command];
             }
         }
         if ($check_only) {

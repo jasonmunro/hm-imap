@@ -583,6 +583,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
             );
             $this->state = 'selected';
             $this->selected_mailbox = array('name' => $box, 'detail' => $result);
+
         }
         return $result;
     }
