@@ -1972,8 +1972,20 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $struct = $this->get_message_structure($uid);
         $matches = $this->search_bodystructure($struct, $flds, false);
         if (!empty($matches)) {
+
             $msg_part_num = array_slice(array_keys($matches), 0, 1)[0];
-            $struct = array_slice($matches, 0, 1)[0];
+            $struct = array_slice($matches, 0, 1);
+
+            if (isset($struct[$msg_part_num])) {
+                $struct = $struct[$msg_part_num];
+            }
+            elseif (isset($struct[0])) {
+                $struct = $struct[0];
+            }
+
+            /*error_log(sprintf("uid %s part %s matches %s struct %s",
+                $uid, $msg_part_num, print_r($matches, true), print_r($struct, true)));*/
+
             return ($this->get_message_content($uid, $msg_part_num, false, $struct));
         } 
         return false;
