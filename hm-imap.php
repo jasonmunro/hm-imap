@@ -76,6 +76,9 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     /* maximum number of IMAP commands to cache */
     public $cache_limit = 100;
 
+    /* query the server for it's CAPABILITY response */
+    public $no_caps = false;
+
     /* IMAP ID client information */
     public $app_name = 'Hm_IMAP';
     public $app_version = '3.0';
@@ -217,7 +220,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         if ( $authed ) {
             $this->debug[] = 'Logged in successfully as '.$username;
             $this->get_capability();
-            $this->enable();
+            //$this->enable();
             //$this->enable_compression();
         }
         else {
@@ -263,13 +266,15 @@ class Hm_IMAP extends Hm_IMAP_Cache {
             return $this->capability;
         }
         else {
-            $command = "CAPABILITY\r\n";
-            $this->send_command($command);
-            $response = $this->get_response();
-            $this->capability = $response[0];
-            $this->debug['CAPS'] = $this->capability;
-            $this->parse_extensions_from_capability();
-            return $this->capability;
+            if (!$this->no_caps) {
+                $command = "CAPABILITY\r\n";
+                $this->send_command($command);
+                $response = $this->get_response();
+                $this->capability = $response[0];
+                $this->debug['CAPS'] = $this->capability;
+                $this->parse_extensions_from_capability();
+                return $this->capability;
+            }
         }
     }
 
