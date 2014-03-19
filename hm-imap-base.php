@@ -32,7 +32,6 @@ class Hm_IMAP_Base {
     protected $current_command = false;        // current/latest IMAP command issued
     protected $max_read = false;               // limit on allowable read size
     protected $command_count = 0;              // current command number
-    protected $cache_keys = array();           // cache by folder keys
     protected $cache_data = array();           // cache data
     protected $supported_extensions = array(); // IMAP extensions in the CAPABILITY response
     protected $enabled_extensions = array();   // IMAP extensions validated by the ENABLE response
@@ -1160,21 +1159,36 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
      *
      * @return void
      */
-    protected function check_mailbox_state_change($attributes) {
-        if (!$this->selected_mailbox) {
-            return;
+    protected function check_mailbox_state_change($attributes, $cached_state=false, $mailbox=false) {
+        if (!$cached_state) {
+            if ($this->selected_mailbox) {
+                $cached_state = $this->selected_mailbox;
+            }
+            if (!$cached_state) {
+                return;
+            }
         }
-        $state_changed = false;
+        $full_change = false;
+        $partial_change = false;
+
         foreach($attributes as $name => $value) {
             if ($value !== false) {
-                if (isset($this->selected_mailbox['detail'][$name]) && $this->selected_mailbox['detail'][$name] != $value) {
-                    $this->selected_mailbox['detail'][$name] = $value;
-                    $state_changed = true;
+                if (isset($cached_state[$name]) && $cached_state[$name] != $value) {
+                    if ($name == 'uidvalidity') {
+                        $full_change = true;
+                    }
+                    else {
+                        $partial_change = true;
+                    }
+                    error_log('CHANGED: '.$name.' : '.print_r($value, true));
                 }
             }
         }
-        if ($state_changed || $attributes['nomodseq']) {
-            $this->bust_cache($this->selected_mailbox['name']);
+        if ($full_change || $attributes['nomodseq']) {
+            $this->bust_cache($mailbox);
+        }
+        elseif ($partial_change) {
+            $this->bust_cache($mailbox, false);
         }
     }
 
@@ -1293,32 +1307,30 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
         if (in_array('VANISHED', $data)) {
             $uid = $this->get_adjacent_response_value($data, -1, 'VANISHED');
             if ($this->is_clean($uid, 'uid')) {
-                if (isset($this->cache_keys[$this->selected_mailbox['name']])) {
-                    $key = $this->cache_keys[$this->selected_mailbox['name']];
-                    if (isset($this->cache_data[$key])) {
-                        foreach ($this->cache_data[$key] as $command => $result) {
-                            if (strstr($command, 'UID FETCH')) {
-                                if (isset($result[$uid])) {
-                                    unset($this->cache_data[$key][$command][$uid]);
-                                    $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
-                                    $res = 1;
-                                }
+                if (isset($this->cache_data[$this->selected_mailbox['name']])) {
+                    $key = $this->selected_mailbox['name'];
+                    foreach ($this->cache_data[$key] as $command => $result) {
+                        if (strstr($command, 'UID FETCH')) {
+                            if (isset($result[$uid])) {
+                                unset($this->cache_data[$key][$command][$uid]);
+                                $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
+                                $res = 1;
                             }
-                            elseif (strstr($command, 'UID SORT')) {
-                                $index = array_search($uid, $result);
-                                if ($index !== false) {
-                                    unset($this->cache_data[$key][$command][$index]);
-                                    $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
-                                    $res = 1;
-                                }
+                        }
+                        elseif (strstr($command, 'UID SORT')) {
+                            $index = array_search($uid, $result);
+                            if ($index !== false) {
+                                unset($this->cache_data[$key][$command][$index]);
+                                $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
+                                $res = 1;
                             }
-                            elseif (strstr($command, 'UID SEARCH')) {
-                                $index = array_search($uid, $result);
-                                if ($index !== false) {
-                                    unset($this->cache_data[$key][$command][$index]);
-                                    $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
-                                    $res = 1;
-                                }
+                        }
+                        elseif (strstr($command, 'UID SEARCH')) {
+                            $index = array_search($uid, $result);
+                            if ($index !== false) {
+                                unset($this->cache_data[$key][$command][$index]);
+                                $this->debug[] = sprintf('Removed message from cache using QRESYNC response (uid: %s)', $uid);
+                                $res = 1;
                             }
                         }
                     }
@@ -1335,26 +1347,24 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
                 }
             }
             if ($uid) {
-                if (isset($this->cache_keys[$this->selected_mailbox['name']])) {
-                    $key = $this->cache_keys[$this->selected_mailbox['name']];
-                    if (isset($this->cache_data[$key])) {
-                        foreach ($this->cache_data[$key] as $command => $result) {
-                            if (strstr($command, 'UID FETCH')) {
-                                if (isset($result[$uid]['flags'])) {
-                                    $this->cache_data[$key][$command][$uid]['flags'] = implode(' ', $flags);
-                                    $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
-                                    $res = 1;
-                                }
-                                elseif (isset($result['flags'])) {
-                                    $this->cache_data[$key][$command]['flags'] = implode(' ', $flags);
-                                    $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
-                                    $res = 1;
-                                }
-                                elseif (isset($result['Flags'])) {
-                                    $this->cache_data[$key][$command]['Flags'] = implode(' ', $flags);
-                                    $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
-                                    $res = 1;
-                                }
+                if (isset($this->cache_data[$this->selected_mailbox['name']])) {
+                    $key = $this->selected_mailbox['name'];
+                    foreach ($this->cache_data[$key] as $command => $result) {
+                        if (strstr($command, 'UID FETCH')) {
+                            if (isset($result[$uid]['flags'])) {
+                                $this->cache_data[$key][$command][$uid]['flags'] = implode(' ', $flags);
+                                $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
+                                $res = 1;
+                            }
+                            elseif (isset($result['flags'])) {
+                                $this->cache_data[$key][$command]['flags'] = implode(' ', $flags);
+                                $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
+                                $res = 1;
+                            }
+                            elseif (isset($result['Flags'])) {
+                                $this->cache_data[$key][$command]['Flags'] = implode(' ', $flags);
+                                $this->debug[] = sprintf('Updated cache data from QRESYNC response (uid: %s)', $uid);
+                                $res = 1;
                             }
                         }
                     }
@@ -1376,39 +1386,23 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
             return $res;
         }
         $command = str_replace(array("\r", "\n"), array(''), preg_replace("/^A\d+ /", '', $command));
-        if (preg_match("/^LIST/", $command)) {
+        if (preg_match("/^SELECT/", $command)) {
+            $this->cache_data['SELECT'][$command] = $res;
+        }
+        elseif (preg_match("/^EXAMINE/", $command)) {
+            $this->cache_data['EXAMINE'][$command] = $res;
+        }
+        elseif (preg_match("/^LIST/", $command)) {
             $this->cache_data['LIST'][$command] = $res;
         }
-        if (preg_match("/^LSUB/", $command)) {
+        elseif (preg_match("/^LSUB/", $command)) {
             $this->cache_data['LSUB'][$command] = $res;
         }
-        if (preg_match("/^NAMESPACE/", $command)) {
+        elseif (preg_match("/^NAMESPACE/", $command)) {
             $this->cache_data['NAMESPACE'] = $res;
         }
         elseif ($this->selected_mailbox) {
-            $key = $this->build_cache_key();
-            $box = $this->selected_mailbox['name'];
-            if (isset($this->cache_keys[$box])) {
-                $old_key = $this->cache_keys[$box];
-            }
-            else {
-                $old_key = false;
-            }
-            if ($old_key && $old_key != $key) {
-                if (isset($this->cache_data[$old_key])) {
-                    unset($this->cache_data[$old_key]);
-                    $this->cache_data[$key] = array();
-                    $this->cache_keys[$box] = $key;
-                }
-            }
-            else {
-                if (!isset($this->cache_keys[$box])) {
-                    $this->cache_keys[$box] = $key;
-                }
-                if (!isset($this->cache_data[$key])) {
-                    $this->cache_data[$key] = array();
-                }
-            }
+            $key = $this->selected_mailbox['name'];
             $this->cache_data[$key][$command] = $res;
         }
         $count = 0;
@@ -1457,8 +1451,8 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
         $current_key = false;
         $to_remove = array();
         if (isset($this->selected_mailbox['name'])) {
-            if (isset($this->cache_keys[$this->selected_mailbox['name']])) {
-                $current_key = $this->cache_keys[$this->selected_mailbox['name']];
+            if (isset($this->cache_data[$this->selected_mailbox['name']])) {
+                $current_key = $this->selected_mailbox['name'];
             }
         }
         $to_remove = $this->collect_cache_entries_to_prune($count, array($current_key, 'LIST', 'LSUB', 'NAMESPACE' ));
@@ -1494,7 +1488,15 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
         $command = str_replace(array("\r", "\n"), array(''), preg_replace("/^A\d+ /", '', $command));
         $res = false;
         $msg = '';
-        if (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'][$command])) {
+        if (preg_match("/^SELECT/", $command) && isset($this->cache_data['SELECT'][$command])) {
+            $res = $this->cache_data['SELECT'][$command];
+            $msg = 'Found cached mailbox state: '.$command;
+        }
+        elseif (preg_match("/^EXAMINE/", $command) && isset($this->cache_data['EXAMINE'][$command])) {
+            $res = $this->cache_data['EXAMINE'][$command];
+            $msg = 'Found cached mailbox state: '.$command;
+        }
+        elseif (preg_match("/^LIST/ ", $command) && isset($this->cache_data['LIST'][$command])) {
             $msg = 'Cache hit for: '.$command;
             $res = $this->cache_data['LIST'][$command];
         }
@@ -1508,12 +1510,11 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
         }
         elseif ($this->selected_mailbox) {
 
-            $key = $this->build_cache_key();
             $box = $this->selected_mailbox['name'];
 
-            if (isset($this->cache_data[$key][$command])) {
+            if (isset($this->cache_data[$box][$command])) {
                 $msg = 'Cache hit for: '.$box.' with: '.$command;
-                $res = $this->cache_data[$key][$command];
+                $res = $this->cache_data[$box][$command];
             }
         }
         if ($msg) {
@@ -1527,28 +1528,13 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
     }
 
     /**
-     * build a sha1 cache key from the selected mailbox state
-     *
-     * @return string key value
-     */
-    private function build_cache_key() {
-        return sha1((string) $this->selected_mailbox['name'].
-            $this->selected_mailbox['detail']['uidvalidity'].
-            $this->selected_mailbox['detail']['uidnext'].
-            $this->selected_mailbox['detail']['exists'].
-            $this->selected_mailbox['detail']['recent'].
-            $this->selected_mailbox['detail']['first_unseen']
-        );
-    }
-
-    /**
      * invalidate parts of the data cache
      *
      * @param $type string can be one of LIST, LSUB, ALL, or a mailbox name
      *
      * @return void
      */
-    public function bust_cache($type) {
+    public function bust_cache($type, $full=true) {
         if (!$this->use_cache) {
             return;
         }
@@ -1566,16 +1552,13 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
                 }
                 break;
             case 'ALL':
-                $this->cache_keys = array();
                 $this->cache_data = array();
                 $this->debug[] = 'cache busted: '.$type;
                 break;
             default:
-                if (isset($this->cache_keys[$type])) {
-                    if(isset($this->cache_data[$this->cache_keys[$type]])) {
-                        unset($this->cache_data[$this->cache_keys[$type]]);
-                    }
-                    unset($this->cache_keys[$type]);
+                if (isset($this->cache_data[$type])) {
+                    /* TODO: deail with full vs partial here */
+                    unset($this->cache_data[$type]);
                     $this->debug[] = 'cache busted: '.$type;
                 }
                 break;
@@ -1589,13 +1572,13 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
      */
     public function dump_cache( $type = 'string') {
         if ($type == 'array') {
-            return array($this->cache_keys, $this->cache_data);
+            return $this->cache_data;
         }
         elseif ($type == 'gzip') {
-            return gzcompress(serialize(array($this->cache_keys, $this->cache_data)));
+            return gzcompress(serialize($this->cache_data));
         }
         else {
-            return serialize(array($this->cache_keys, $this->cache_data));
+            return serialize($this->cache_data);
         }
     }
 
@@ -1607,25 +1590,22 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
      */
     public function load_cache($data, $type='string') {
         if ($type == 'array') {
-            if (isset($data[0]) && isset($data[1])) {
-                $this->cache_keys = $data[0];
-                $this->cache_data = $data[1];
+            if (is_array($data)) {
+                $this->cache_data = $data;
                 $this->debug[] = 'Cache loaded: '.count($this->cache_data);
             }
         }
         elseif ($type == 'gzip') {
             $data = unserialize(gzuncompress($data));
-            if (isset($data[0]) && isset($data[1])) {
-                $this->cache_keys = $data[0];
-                $this->cache_data = $data[1];
+            if (is_array($data)) {
+                $this->cache_data = $data;
                 $this->debug[] = 'Cache loaded: '.count($this->cache_data);
             }
         }
         else {
             $data = unserialize($data);
-            if (isset($data[0]) && isset($data[1])) {
-                $this->cache_keys = $data[0];
-                $this->cache_data = $data[1];
+            if (is_array($data)) {
+                $this->cache_data = $data;
                 $this->debug[] = 'Cache loaded: '.count($this->cache_data);
             }
         }

@@ -562,6 +562,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         elseif ($this->is_supported('CONDSTORE')) {
             $command .= ' (CONDSTORE)';
         }
+        $cached_state = $this->check_cache($command);
         $this->send_command($command."\r\n");
         $res = $this->get_response(false, true);
         $status = $this->check_response($res, true);
@@ -569,7 +570,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         if ($status) {
             list($qresync, $attributes) = $this->parse_untagged_responses($res);
             if (!$qresync) {
-                $this->check_mailbox_state_change($attributes);
+                $this->check_mailbox_state_change($attributes, $cached_state, $mailbox);
             }
             else {
                 $this->debug[] = sprintf('Cache bust avoided on %s with QRESYNC!', $this->selected_mailbox['name']);
@@ -588,6 +589,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
             );
             $this->state = 'selected';
             $this->selected_mailbox = array('name' => $box, 'detail' => $result);
+            return $this->cache_return_val($result, $command);
 
         }
         return $result;
@@ -1793,7 +1795,11 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     public function unselect_mailbox() {
         $this->send_command("UNSELECT\r\n");
         $res = $this->get_response(false, true);
-        return $this->check_response($res, true);
+        $status = $this->check_response($res, true);
+        if ($status) {
+            $this->selected_mailbox = false;
+        }
+        return $status;
     }
 
     /**
