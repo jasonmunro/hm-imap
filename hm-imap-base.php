@@ -1376,13 +1376,13 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
             return $res;
         }
         $command = str_replace(array("\r", "\n"), array(''), preg_replace("/^A\d+ /", '', $command));
-        if (strstr($command, 'LIST')) {
+        if (preg_match("/^LIST/", $command)) {
             $this->cache_data['LIST'][$command] = $res;
         }
-        elseif (strstr($command, 'LSUB')) {
+        if (preg_match("/^LSUB/", $command)) {
             $this->cache_data['LSUB'][$command] = $res;
         }
-        elseif (strstr($command, 'NAMESPACE')) {
+        if (preg_match("/^NAMESPACE/", $command)) {
             $this->cache_data['NAMESPACE'] = $res;
         }
         elseif ($this->selected_mailbox) {
