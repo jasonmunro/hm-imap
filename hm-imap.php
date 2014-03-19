@@ -294,7 +294,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $commands = $this->build_list_commands($lsub, $mailbox, $keyword);
         $cache_command = implode('', array_map(function($v) { return $v[0]; }, $commands)).(string)$mailbox.(string)$keyword;
         $cache = $this->check_cache($cache_command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
 
@@ -498,7 +498,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $data = array();
         $command = "NAMESPACE\r\n";
         $cache = $this->check_cache($command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
         $this->send_command("NAMESPACE\r\n");
@@ -664,7 +664,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $command .= "BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE CONTENT-TYPE X-PRIORITY TO LIST-ARCHIVE)])\r\n";
         $cache_command = $command.(string)$raw;
         $cache = $this->check_cache($cache_command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
         $this->send_command($command);
@@ -773,7 +773,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $struct = array();
         $command = "UID FETCH $uid BODYSTRUCTURE\r\n";
         $cache = $this->check_cache($command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
         $this->send_command($command);
@@ -841,7 +841,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
             $cache_command .= '1';
         }
         $cache = $this->check_cache($cache_command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
         $this->send_command($command);
@@ -944,7 +944,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         $command .= '('.$target.')'.$charset.$uids.$fld."\r\n";
         $cache = $this->check_cache($command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
         $this->send_command($command);
@@ -998,7 +998,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         }
         $cache_command = $command.(string)$raw;
         $cache = $this->check_cache($cache_command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
         $this->send_command($command);
@@ -1190,7 +1190,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $command = $command1.$command2;
         $cache_command = $command.(string)$reverse;
         $cache = $this->check_cache($cache_command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
         $this->send_command($command);
@@ -1870,7 +1870,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
         $command .= '('.$sort.') US-ASCII '.$filter."\r\n";
         $cache_command = $command.(string)$reverse;
         $cache = $this->check_cache($cache_command);
-        if ($cache) {
+        if ($cache !== false) {
             return $cache;
         }
         $this->send_command($command);
@@ -2070,12 +2070,12 @@ class Hm_IMAP extends Hm_IMAP_Cache {
 /*
  * TODO:
  *
+ * - Add debug timing to cache fetching
  * - Test a wider variety of breakage scenerios (from an API point of view)
  * - Provide a recommended production $config
  * - abstract header result parsing
  * - fix fragile get_message_structure internals
  * - fix or remove COMPRESS extension. stream functions don't seem to work ...
- * - think about breaking this up into multiple files ...
  * - add support for more extensions:
  *   - CREATE-SPECIAL-USE support
  *   - MULTI-APPEND support
