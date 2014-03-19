@@ -24,6 +24,7 @@
 /* base functions for IMAP communication */
 class Hm_IMAP_Base {
 
+    public $cached_response = false;           // flag to indicate we are using a cached response
     protected $handle = false;                 // fsockopen handle to the IMAP server
     protected $debug = array();                // debug messages
     protected $commands = array();             // list of IMAP commands issued
@@ -33,7 +34,6 @@ class Hm_IMAP_Base {
     protected $command_count = 0;              // current command number
     protected $cache_keys = array();           // cache by folder keys
     protected $cache_data = array();           // cache data
-    protected $cached_response = false;        // flag to indicate we are using a cached response
     protected $supported_extensions = array(); // IMAP extensions in the CAPABILITY response
     protected $enabled_extensions = array();   // IMAP extensions validated by the ENABLE response
     protected $capability = false;             // IMAP CAPABILITY response
@@ -1386,9 +1386,7 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
             $this->cache_data['NAMESPACE'] = $res;
         }
         elseif ($this->selected_mailbox) {
-            $key = sha1((string) $this->selected_mailbox['name'].$this->selected_mailbox['detail']['uidvalidity'].
-                $this->selected_mailbox['detail']['uidnext'].$this->selected_mailbox['detail']['exists'].
-                $this->selected_mailbox['detail']['recent'].$this->selected_mailbox['detail']['first_unseen']);
+            $key = $this->build_cache_key();
             $box = $this->selected_mailbox['name'];
             if (isset($this->cache_keys[$box])) {
                 $old_key = $this->cache_keys[$box];
@@ -1509,23 +1507,38 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
             $res = $this->cache_data['NAMESPACE'];
         }
         elseif ($this->selected_mailbox) {
+
+            $key = $this->build_cache_key();
             $box = $this->selected_mailbox['name'];
-            $key = sha1((string) $this->selected_mailbox['name'].$this->selected_mailbox['detail']['uidvalidity'].
-                $this->selected_mailbox['detail']['uidnext'].$this->selected_mailbox['detail']['exists'].
-                $this->selected_mailbox['detail']['recent'].$this->selected_mailbox['detail']['first_unseen']);
+
             if (isset($this->cache_data[$key][$command])) {
                 $msg = 'Cache hit for: '.$box.' with: '.$command;
                 $res = $this->cache_data[$key][$command];
             }
         }
-        if ($check_only) {
-            return $res ? true : false;
-        }
         if ($msg) {
             $this->cached_response = true;
             $this->debug[] = $msg;
         }
+        if ($check_only) {
+            return $res ? true : false;
+        }
         return $res;
+    }
+
+    /**
+     * build a sha1 cache key from the selected mailbox state
+     *
+     * @return string key value
+     */
+    private function build_cache_key() {
+        return sha1((string) $this->selected_mailbox['name'].
+            $this->selected_mailbox['detail']['uidvalidity'].
+            $this->selected_mailbox['detail']['uidnext'].
+            $this->selected_mailbox['detail']['exists'].
+            $this->selected_mailbox['detail']['recent'].
+            $this->selected_mailbox['detail']['first_unseen']
+        );
     }
 
     /**
