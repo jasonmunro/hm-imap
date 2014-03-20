@@ -1180,7 +1180,6 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
                     else {
                         $partial_change = true;
                     }
-                    error_log('CHANGED: '.$name.' : '.print_r($value, true));
                 }
             }
         }
