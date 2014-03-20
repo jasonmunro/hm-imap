@@ -1557,9 +1557,18 @@ class Hm_IMAP_Cache extends Hm_IMAP_Parser {
                 break;
             default:
                 if (isset($this->cache_data[$type])) {
-                    /* TODO: deail with full vs partial here */
-                    unset($this->cache_data[$type]);
-                    $this->debug[] = 'cache busted: '.$type;
+                    if (!$full) {
+                        foreach ($this->cache_data[$type] as $command => $res) {
+                            if (!preg_match("/^UID FETCH/", $command)) { 
+                                unset($this->cache_data[$type][$command]);
+                                $this->debug[] = 'Partial cache flush: '.$command;
+                            }
+                        }
+                    }
+                    else {
+                        unset($this->cache_data[$type]);
+                        $this->debug[] = 'cache busted: '.$type;
+                    }
                 }
                 break;
         }
