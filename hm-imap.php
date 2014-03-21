@@ -606,6 +606,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
     public function get_mailbox_status($mailbox, $args=array('UNSEEN', 'UIDVALIDITY', 'UIDNEXT', 'MESSAGES', 'RECENT')) {
         $command = 'STATUS "'.$this->utf7_encode($mailbox).'" ('.implode(' ', $args).")\r\n";
         $this->send_command($command);
+        $attributes = array();
         $response = $this->get_response(false, true);
         if ($this->check_response($response, true)) {
             $attributes = $this->parse_status_response($response);
