@@ -986,7 +986,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      *
      * @return array associate array of message headers
      */
-    public function get_message_headers($uid, $message_part, $raw=false) {
+    public function get_message_headers($uid, $message_part=false, $raw=false) {
         if (!$this->is_clean($uid, 'uid')) {
             return array();
         }
@@ -1029,6 +1029,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
                         }
                     }
                     elseif ($v != ']' && !$search) {
+                        $v = preg_replace("/(?!\r)\n/", "\r\n", $v);
                         $parts = explode("\r\n", $v);
                         if (is_array($parts) && !empty($parts)) {
                             $i = 0;
@@ -1974,7 +1975,7 @@ class Hm_IMAP extends Hm_IMAP_Cache {
      *
      * @return string formatted message content, bool false if no matching part is found
      */
-    public function get_first_message_part($uid, $type, $subtype=false) {
+    public function get_first_message_part($uid, $type, $subtype=false, $struct=false) {
         if (!$subtype) {
             $flds = array('type' => $type);
         }
