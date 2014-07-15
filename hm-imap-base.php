@@ -1213,7 +1213,7 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
             $namespace = $nsvals['prefix'];
             $delim = $nsvals['delim'];
             $ns_class = $nsvals['class'];
-            if (strtoupper($namespace) == 'INBOX') { 
+            if (strtoupper(substr($namespace, 0, 5)) == 'INBOX') { 
                 $namespace = '';
             }
 
@@ -1221,8 +1221,8 @@ class Hm_IMAP_Parser extends Hm_IMAP_Base {
             if ($mailbox && $namespace) {
                 $namespace .= $delim.$mailbox;
             }
-            else {
-                $namespace .= $mailbox;
+            elseif ($mailbox) {
+                $namespace .= $mailbox.$delim.'%';
             }
             if ($this->is_supported('LIST-STATUS')) {
                 $status = ' RETURN (';
